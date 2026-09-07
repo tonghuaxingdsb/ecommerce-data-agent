@@ -7,6 +7,7 @@ Phase 0 delivers the project skeleton for an ecommerce natural-language data ana
 - FastAPI service skeleton wired to a LangGraph workflow.
 - DeepSeek API gateway through the OpenAI-compatible SDK. It calls DeepSeek when `DEEPSEEK_API_KEY` is configured and returns a local mock response otherwise.
 - Phase 1 MVP chain: Text-to-SQL, read-only SQL validation/execution, bounded ReAct retry, natural-language result analysis and a Streamlit demo.
+- Phase 2 experience layer: dictionary retrieval, time-intelligence SQL, multi-turn clarification, automatic chart selection and result summaries.
 
 ## Quick Start
 
@@ -15,6 +16,7 @@ Copy-Item .env.example .env
 docker compose up -d postgres
 uv run python scripts/generate_seed_data.py
 uv run python scripts/load_seed_data.py
+uv run python scripts/seed_dictionaries.py
 uv run ecommerce-agent-api
 ```
 
@@ -42,6 +44,15 @@ uv run streamlit run apps/streamlit_app.py
 ```
 
 The demo calls the same LangGraph chain as the API. The main view shows the natural-language business conclusion, key metrics, result table and a basic chart when the result shape supports it. Generated SQL and trace are kept in the collapsed debug panel.
+
+## Phase 2 capabilities
+
+- The data/metric dictionaries are retrieved by business-question keywords before SQL generation. The PostgreSQL schema includes pgvector columns and cosine indexes; local fallback retrieval keeps the demo runnable without an embedding service.
+- Time expressions such as `近 7 天`, `上周`, `本月`, `环比` and `同比` are converted into bounded periods anchored to the latest date in `fact_orders`.
+- Send the same `conversation_id` in successive API requests to ask follow-up questions. For example, ask `近 30 天销售额多少？` and then `那环比呢？`.
+- Ambiguous questions such as `上个月卖得怎么样？` produce a clarification instead of guessing a metric.
+
+See [phase2-development-log.md](phase2-development-log.md) for the implementation record, verification results and encountered problems/solutions.
 
 ## SQL Safety
 

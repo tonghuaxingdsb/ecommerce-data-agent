@@ -255,10 +255,28 @@ CREATE TABLE dim_region (
   - HTTP 验证问题："近 30 天销售额多少？环比上个月呢？"，`answer_contains_select=false`，`sql_present=true`。
 
 ### Phase 2：准确率与体验（第 4–5 周）
-- [ ] 数据字典 + 指标字典 RAG（pgvector），准确率提升
-- [ ] 时间智能（同比环比）
-- [ ] 多轮对话 + 意图澄清
-- [ ] 自动图表 + 结论摘要
+- [x] 数据字典 + 指标字典 RAG（pgvector），准确率提升
+- [x] 时间智能（同比环比）
+- [x] 多轮对话 + 意图澄清
+- [x] 自动图表 + 结论摘要
+
+#### Phase 2 开发记录（2026-09-07）
+
+**已交付文件**
+- `src/ecommerce_agent/rag.py`：数据字典/指标字典条目、确定性词法检索、pgvector cosine 检索接口。
+- `scripts/seed_dictionaries.py`：幂等初始化字典数据。
+- `src/ecommerce_agent/time_intelligence.py`：近 N 天、上周、本月、同比/环比解析与周期 SQL 生成。
+- `src/ecommerce_agent/conversation.py`：追问上下文、模糊指标澄清和有界会话存储。
+- `src/ecommerce_agent/charting.py`：按结果列自动选择折线图、柱状图或表格。
+- `tests/test_phase2.py`：覆盖 Phase 2 关键路径。
+- `phase2-development-log.md`：难点、痛点、解决办法和后续建议。
+
+**当前验收状态**
+- `uv run pytest -q`：15 passed，1 skipped。
+- `uv run python -m compileall -q src scripts apps`：通过。
+- API 增加 `conversation_id` 与 `retrieval_sources` 字段；Streamlit 支持 session state 多轮追问。
+- 时间周期以 `max(fact_orders.order_date)` 为业务锚点，避免固定快照数据与机器当前日期错位。
+- 详细问题记录见 `phase2-development-log.md`。
 
 ### Phase 3：工程化（第 6–7 周）
 - [ ] LangGraph 状态图重构，SSE 实时展示推理链路
