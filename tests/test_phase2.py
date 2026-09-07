@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from ecommerce_agent.charting import build_chart_spec
 from ecommerce_agent.conversation import ConversationTurn, is_ambiguous_metric_question, resolve_follow_up
+from ecommerce_agent.agent import infer_intent
 from ecommerce_agent.rag import DictionaryRetriever, retrieve_rag_context
 from ecommerce_agent.text_to_sql import fallback_sql_plan
 from ecommerce_agent.time_intelligence import build_sales_overview_sql, parse_time_intent
@@ -25,8 +26,18 @@ def test_time_intelligence_uses_calendar_boundaries():
 
     intent = parse_time_intent("上周销售额")
     assert intent.calendar_period == "week"
+    assert intent.period_offset == -1
     sql, _ = build_sales_overview_sql("上周销售额")
-    assert "date_trunc('week', end_date)" in sql
+    assert "date_trunc('week', end_date - INTERVAL '1 week')" in sql
+
+    intent = parse_time_intent("上个月销售额")
+    assert intent.period_offset == -1
+    sql, _ = build_sales_overview_sql("上个月销售额")
+    assert "end_date - INTERVAL '1 month'" in sql
+
+
+def test_calendar_question_is_classified_as_sales_overview():
+    assert infer_intent("上周销售额") == "sales_overview"
 
 
 def test_dictionary_retrieval_returns_metric_and_relevant_fields():

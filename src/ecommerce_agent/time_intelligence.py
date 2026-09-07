@@ -11,24 +11,28 @@ class TimeIntent:
     label: str = "近 30 天"
     anchor_sql: str = "(SELECT max(order_date) FROM fact_orders)"
     calendar_period: str | None = None
+    period_offset: int = 0
 
 
 def parse_time_intent(question: str) -> TimeIntent:
     text = question.lower().replace(" ", "")
     day_match = re.search(r"近(\d+)(?:天|日)", text)
     calendar_period: str | None = None
+    period_offset = 0
     if day_match:
         days = max(1, min(int(day_match.group(1)), 366))
         label = f"近 {days} 天"
     elif "上周" in text or "上星期" in text:
         days, label = 7, "上周"
         calendar_period = "week"
+        period_offset = -1
     elif "本月" in text or "这个月" in text:
         days, label = 30, "本月"
         calendar_period = "month"
     elif "上月" in text or "上个月" in text:
         days, label = 30, "上个月"
         calendar_period = "month"
+        period_offset = -1
     elif "今年" in text or "年度" in text:
         days, label = 365, "今年"
         calendar_period = "year"
@@ -42,7 +46,7 @@ def parse_time_intent(question: str) -> TimeIntent:
         comparison = "mom"
     else:
         comparison = None
-    return TimeIntent(window_days=days, comparison=comparison, label=label, calendar_period=calendar_period)
+    return TimeIntent(window_days=days, comparison=comparison, label=label, calendar_period=calendar_period, period_offset=period_offset)
 
 
 def build_period_sql(time_intent: TimeIntent) -> str:
@@ -59,21 +63,29 @@ def build_period_sql(time_intent: TimeIntent) -> str:
 def build_sales_overview_sql(question: str, *, area_filter: str | None = None) -> tuple[str, TimeIntent]:
     intent = parse_time_intent(question)
     days = intent.window_days
+    anchor = "end_date"
+    if intent.period_offset:
+        unit = {"month": "month", "week": "week", "year": "year"}[intent.calendar_period or "month"]
+        anchor = f"end_date - INTERVAL '{abs(intent.period_offset)} {unit}'"
     if intent.calendar_period == "month":
-        current_predicate = "o.order_date >= date_trunc('month', end_date)::date AND o.order_date <= end_date"
+        current_predicate = f"o.order_date >= date_trunc('month', {anchor})::date AND o.order_date < date_trunc('month', {anchor}) + INTERVAL '1 month'"
         if intent.comparison == "yoy":
-            comparison_predicate = "o.order_date >= date_trunc('month', end_date - INTERVAL '1 year')::date AND o.order_date <= end_date - INTERVAL '1 year'"
+            comparison_anchor = f"{anchor} - INTERVAL '1 year'"
+            comparison_predicate = f"o.order_date >= date_trunc('month', {comparison_anchor})::date AND o.order_date < date_trunc('month', {comparison_anchor}) + INTERVAL '1 month'"
         else:
-            comparison_predicate = "o.order_date >= date_trunc('month', end_date - INTERVAL '1 month')::date AND o.order_date < date_trunc('month', end_date)::date"
+            comparison_anchor = f"{anchor} - INTERVAL '1 month'"
+            comparison_predicate = f"o.order_date >= date_trunc('month', {comparison_anchor})::date AND o.order_date < date_trunc('month', {anchor})::date"
     elif intent.calendar_period == "week":
-        current_predicate = "o.order_date >= date_trunc('week', end_date)::date AND o.order_date <= end_date"
+        current_predicate = f"o.order_date >= date_trunc('week', {anchor})::date AND o.order_date < date_trunc('week', {anchor}) + INTERVAL '1 week'"
         if intent.comparison == "yoy":
-            comparison_predicate = "o.order_date >= date_trunc('week', end_date - INTERVAL '1 year')::date AND o.order_date <= end_date - INTERVAL '1 year'"
+            comparison_anchor = f"{anchor} - INTERVAL '1 year'"
+            comparison_predicate = f"o.order_date >= date_trunc('week', {comparison_anchor})::date AND o.order_date < date_trunc('week', {comparison_anchor}) + INTERVAL '1 week'"
         else:
-            comparison_predicate = "o.order_date >= date_trunc('week', end_date)::date - INTERVAL '7 days' AND o.order_date < date_trunc('week', end_date)::date"
+            comparison_predicate = f"o.order_date >= date_trunc('week', {anchor})::date - INTERVAL '7 days' AND o.order_date < date_trunc('week', {anchor})::date"
     elif intent.calendar_period == "year":
-        current_predicate = "o.order_date >= date_trunc('year', end_date)::date AND o.order_date <= end_date"
-        comparison_predicate = "o.order_date >= date_trunc('year', end_date - INTERVAL '1 year')::date AND o.order_date <= end_date - INTERVAL '1 year'"
+        current_predicate = f"o.order_date >= date_trunc('year', {anchor})::date AND o.order_date < date_trunc('year', {anchor}) + INTERVAL '1 year'"
+        comparison_anchor = f"{anchor} - INTERVAL '1 year'"
+        comparison_predicate = f"o.order_date >= date_trunc('year', {comparison_anchor})::date AND o.order_date < date_trunc('year', {comparison_anchor}) + INTERVAL '1 year'"
     else:
         current_predicate = f"o.order_date BETWEEN end_date - INTERVAL '{days - 1} days' AND end_date"
         if intent.comparison == "yoy":

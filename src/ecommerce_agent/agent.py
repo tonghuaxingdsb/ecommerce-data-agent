@@ -222,7 +222,7 @@ def infer_intent(question: str) -> str:
         return "user_analysis"
     if any(keyword in normalized for keyword in ["渠道", "搜索", "推荐", "直播", "广告", "转化"]):
         return "channel_analysis"
-    if any(keyword in normalized for keyword in ["同比", "环比", "趋势", "近", "上月", "上个月", "销售额", "gmv"]):
+    if any(keyword in normalized for keyword in ["同比", "环比", "趋势", "近", "上周", "本周", "本月", "上月", "上个月", "今年", "销售", "gmv"]):
         return "sales_overview"
     return "general_analysis"
 

@@ -17,6 +17,7 @@
 | 问题 | 原因 | 解决办法 |
 |---|---|---|
 | 业务数据只有 2026-03 至 2026-08，直接用 `CURRENT_DATE` 会查不到数据 | Demo 数据是固定快照，运行日期会继续变化 | 时间智能统一使用 `max(fact_orders.order_date)` 作为锚点，并把周期计算封装在 `time_intelligence.py` |
+| “上个月/上周”与“近 30/7 天”不是同一个口径 | 简单按天数回退会跨月、跨周，导致运营报表边界不一致 | 月/周/年使用 PostgreSQL `date_trunc` 日历边界；上月/上周先移动锚点，再计算对比周期 |
 | 仅靠大模型生成指标容易出现“销售额/销量”混用 | 同义词和指标定义没有稳定注入 | 新增指标字典，固定表达式与过滤条件；RAG 只注入与当前问题相关的条目 |
 | pgvector 需要 embedding 服务，离线 demo 无法稳定启动 | 本地没有强制配置 embedding API，且向量列可能为空 | 默认使用确定性的词法检索；提供 `search_pgvector()` 作为有 embedding 时的升级路径，空向量记录仍可正常使用 |
 | “卖得怎么样”无法判断用户要看哪个指标 | 口语表达存在真实业务歧义 | 在 fallback 和模型计划解析前增加模糊指标检测，返回澄清问题而不是执行猜测查询 |
@@ -26,7 +27,7 @@
 
 ## 验证结果
 
-- `uv run pytest -q`：16 passed，1 skipped（PostgreSQL 不可用时跳过真实连接测试）。
+- `uv run pytest -q`：17 passed，1 skipped（PostgreSQL 不可用时跳过真实连接测试）。
 - `uv run python -m compileall -q src scripts apps`：通过。
 - 关键测试覆盖：同比/环比 SQL 周期、RAG 命中、模糊口径澄清、追问上下文、图表自动推断。
 
