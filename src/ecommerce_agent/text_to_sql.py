@@ -5,6 +5,9 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from ecommerce_agent.conversation import is_ambiguous_metric_question
+from ecommerce_agent.time_intelligence import build_sales_overview_sql
+
 
 FEW_SHOTS = """
 示例 1：销售趋势
@@ -93,6 +96,15 @@ def fallback_sql_plan(question: str, intent: str) -> SQLPlan:
     normalized = question.lower()
     area_filter = extract_area_filter(question)
 
+    if is_ambiguous_metric_question(question):
+        return SQLPlan(
+            intent=intent,
+            needs_clarification=True,
+            clarifying_question="你说的“卖得怎么样”具体想看销售额、订单量、销量还是客单价？",
+            analysis_plan=["澄清核心指标", "确定时间范围和筛选条件"],
+            summary="用户尚未指定要比较的业务指标。",
+        )
+
     if intent == "product_analysis":
         if "滞销" in question:
             sql = """
@@ -176,36 +188,9 @@ ORDER BY o.order_date
 """.strip()
         return SQLPlan(intent="sales_overview", analysis_plan=default_steps(), candidate_sql=sql, summary="按天输出近 30 天 paid 销售趋势。", chart_type="line", chart_x="order_date", chart_y="gmv")
 
-    sql = f"""
-WITH bounds AS (
-  SELECT max(order_date) AS end_date FROM fact_orders
-),
-periods AS (
-  SELECT
-    SUM(o.amount) FILTER (WHERE o.order_date BETWEEN end_date - INTERVAL '29 days' AND end_date) AS current_gmv,
-    COUNT(DISTINCT o.order_id) FILTER (WHERE o.order_date BETWEEN end_date - INTERVAL '29 days' AND end_date) AS current_orders,
-    SUM(o.quantity) FILTER (WHERE o.order_date BETWEEN end_date - INTERVAL '29 days' AND end_date) AS current_units,
-    SUM(o.amount) FILTER (WHERE o.order_date BETWEEN end_date - INTERVAL '59 days' AND end_date - INTERVAL '30 days') AS previous_gmv,
-    COUNT(DISTINCT o.order_id) FILTER (WHERE o.order_date BETWEEN end_date - INTERVAL '59 days' AND end_date - INTERVAL '30 days') AS previous_orders,
-    SUM(o.quantity) FILTER (WHERE o.order_date BETWEEN end_date - INTERVAL '59 days' AND end_date - INTERVAL '30 days') AS previous_units
-  FROM fact_orders o
-  CROSS JOIN bounds
-  {region_join}
-  WHERE o.status = 'paid'
-    {region_where}
-)
-SELECT
-  current_gmv,
-  current_orders,
-  current_units,
-  previous_gmv,
-  previous_orders,
-  previous_units,
-  ROUND((current_gmv - previous_gmv) / NULLIF(previous_gmv, 0) * 100, 2) AS gmv_mom_pct,
-  ROUND(current_gmv / NULLIF(current_orders, 0), 2) AS current_avg_order_value
-FROM periods
-""".strip()
-    return SQLPlan(intent="sales_overview", analysis_plan=default_steps(), candidate_sql=sql, summary="对比近 30 天与前 30 天 paid GMV、订单量、销量和客单价。", chart_type="table")
+    sql, time_intent = build_sales_overview_sql(question, area_filter=area_filter)
+    comparison_label = "去年同期" if time_intent.comparison == "yoy" else "前一周期"
+    return SQLPlan(intent="sales_overview", analysis_plan=default_steps(), candidate_sql=sql, summary=f"对比{time_intent.label}与{comparison_label}的 paid GMV、订单量、销量和客单价。", chart_type="table")
 
 
 def default_steps() -> list[str]:

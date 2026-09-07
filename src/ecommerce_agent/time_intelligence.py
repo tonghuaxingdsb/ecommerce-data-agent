@@ -1,0 +1,88 @@
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class TimeIntent:
+    window_days: int = 30
+    comparison: str | None = "mom"
+    label: str = "近 30 天"
+    anchor_sql: str = "(SELECT max(order_date) FROM fact_orders)"
+
+
+def parse_time_intent(question: str) -> TimeIntent:
+    text = question.lower().replace(" ", "")
+    day_match = re.search(r"近(\d+)(?:天|日)", text)
+    if day_match:
+        days = max(1, min(int(day_match.group(1)), 366))
+        label = f"近 {days} 天"
+    elif "上周" in text or "上星期" in text:
+        days, label = 7, "上周"
+    elif "本月" in text or "这个月" in text:
+        days, label = 30, "本月"
+    elif "上月" in text or "上个月" in text:
+        days, label = 30, "上个月"
+    elif "今年" in text or "年度" in text:
+        days, label = 365, "今年"
+    else:
+        days, label = 30, "近 30 天"
+
+    if "同比" in text or "去年同期" in text:
+        comparison = "yoy"
+    elif any(token in text for token in ("环比", "对比", "相比", "增长", "变化")):
+        comparison = "mom"
+    else:
+        comparison = None
+    return TimeIntent(window_days=days, comparison=comparison, label=label)
+
+
+def build_period_sql(time_intent: TimeIntent) -> str:
+    """Return reusable current/comparison predicates anchored to dataset max date."""
+    days = time_intent.window_days
+    current = f"o.order_date BETWEEN end_date - INTERVAL '{days - 1} days' AND end_date"
+    if time_intent.comparison == "yoy":
+        comparison = f"o.order_date BETWEEN end_date - INTERVAL '{days + 364} days' AND end_date - INTERVAL '365 days'"
+    else:
+        comparison = f"o.order_date BETWEEN end_date - INTERVAL '{(days * 2) - 1} days' AND end_date - INTERVAL '{days} days'"
+    return f"current_period: {current}\ncomparison_period: {comparison}"
+
+
+def build_sales_overview_sql(question: str, *, area_filter: str | None = None) -> tuple[str, TimeIntent]:
+    intent = parse_time_intent(question)
+    days = intent.window_days
+    current_predicate = f"o.order_date BETWEEN end_date - INTERVAL '{days - 1} days' AND end_date"
+    if intent.comparison == "yoy":
+        comparison_predicate = f"o.order_date BETWEEN end_date - INTERVAL '{days + 364} days' AND end_date - INTERVAL '365 days'"
+    else:
+        comparison_predicate = f"o.order_date BETWEEN end_date - INTERVAL '{(days * 2) - 1} days' AND end_date - INTERVAL '{days} days'"
+    region_join = "JOIN dim_region r ON r.region_id = o.region_id" if area_filter else ""
+    region_where = f"AND r.area = '{area_filter}'" if area_filter else ""
+    comparison_alias = "previous" if intent.comparison != "yoy" else "same_period_last_year"
+    sql = f"""
+WITH bounds AS (
+  SELECT max(order_date) AS end_date FROM fact_orders
+), periods AS (
+  SELECT
+    SUM(o.amount) FILTER (WHERE {current_predicate}) AS current_gmv,
+    COUNT(DISTINCT o.order_id) FILTER (WHERE {current_predicate}) AS current_orders,
+    SUM(o.quantity) FILTER (WHERE {current_predicate}) AS current_units,
+    SUM(o.amount) FILTER (WHERE {comparison_predicate}) AS {comparison_alias}_gmv,
+    COUNT(DISTINCT o.order_id) FILTER (WHERE {comparison_predicate}) AS {comparison_alias}_orders,
+    SUM(o.quantity) FILTER (WHERE {comparison_predicate}) AS {comparison_alias}_units
+  FROM fact_orders o CROSS JOIN bounds
+  {region_join}
+  WHERE o.status = 'paid' {region_where}
+)
+SELECT current_gmv, current_orders, current_units,
+       {comparison_alias}_gmv AS previous_gmv,
+       {comparison_alias}_orders AS previous_orders,
+       {comparison_alias}_units AS previous_units,
+       ROUND((current_gmv - {comparison_alias}_gmv) / NULLIF({comparison_alias}_gmv, 0) * 100, 2) AS change_pct,
+       ROUND((current_gmv - {comparison_alias}_gmv) / NULLIF({comparison_alias}_gmv, 0) * 100, 2) AS gmv_mom_pct,
+       ROUND(current_gmv / NULLIF(current_orders, 0), 2) AS current_avg_order_value
+FROM periods
+""".strip()
+    return sql, intent
+

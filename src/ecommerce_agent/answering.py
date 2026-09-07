@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from ecommerce_agent.time_intelligence import parse_time_intent
+
 
 def build_fallback_analysis(question: str, intent: str, rows: list[dict[str, Any]], language: str) -> str:
     if language == "zh":
@@ -15,15 +17,18 @@ def build_chinese_analysis(question: str, intent: str, rows: list[dict[str, Any]
 
     first = rows[0]
     if intent == "sales_overview":
+        time_intent = parse_time_intent(question)
         current_gmv = format_money(first.get("current_gmv"))
         previous_gmv = format_money(first.get("previous_gmv"))
         current_orders = format_int(first.get("current_orders"))
         current_units = format_int(first.get("current_units"))
-        mom = first.get("gmv_mom_pct")
+        mom = first.get("change_pct", first.get("gmv_mom_pct"))
         aov = format_money(first.get("current_avg_order_value"))
         direction = "增长" if number_or_zero(mom) >= 0 else "下降"
+        comparison_label = "同比" if time_intent.comparison == "yoy" else "环比"
+        comparison_period = "去年同期" if time_intent.comparison == "yoy" else "前一周期"
         return (
-            f"近 30 天销售额为 {current_gmv}，前 30 天为 {previous_gmv}，环比{direction} {abs(number_or_zero(mom)):.2f}%。"
+            f"{time_intent.label}销售额为 {current_gmv}，{comparison_period}为 {previous_gmv}，{comparison_label}{direction} {abs(number_or_zero(mom)):.2f}%。"
             f"同期订单量为 {current_orders} 单，销量 {current_units} 件，客单价约 {aov}。"
             "整体看，本期销售表现较上一周期更强，可以继续拆到渠道或商品类目看主要贡献来源。"
         )

@@ -5,8 +5,11 @@ from typing import Any, Callable, Protocol, TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from ecommerce_agent.answering import build_fallback_analysis
+from ecommerce_agent.charting import build_chart_spec
+from ecommerce_agent.conversation import ConversationTurn, resolve_follow_up
 from ecommerce_agent.language import detect_response_language
 from ecommerce_agent.llm import DeepSeekGateway, LLMResult
+from ecommerce_agent.rag import retrieve_rag_context
 from ecommerce_agent.schema_context import DEFAULT_SCHEMA_CONTEXT, METRIC_CONTEXT
 from ecommerce_agent.sql_tool import SQLExecutionResult, execute_sql
 from ecommerce_agent.text_to_sql import parse_sql_plan
@@ -39,6 +42,9 @@ class CompletionGateway(Protocol):
 
 class AgentState(TypedDict, total=False):
     question: str
+    effective_question: str
+    history: list[ConversationTurn | dict[str, str]]
+    conversation_id: str
     schema_context: str
     metric_context: str
     intent: str
@@ -60,6 +66,7 @@ class AgentState(TypedDict, total=False):
     natural_language_analysis: str
     answer: str
     trace: list[str]
+    retrieval_sources: list[str]
 
 
 SQLRunner = Callable[[str], SQLExecutionResult]
@@ -71,10 +78,12 @@ def build_agent_graph(llm: CompletionGateway | None = None, sql_runner: SQLRunne
 
     def classify_intent(state: AgentState) -> AgentState:
         question = state["question"]
-        intent = infer_intent(question)
+        effective_question = resolve_follow_up(question, state.get("history"))
+        intent = infer_intent(effective_question)
         response_language = detect_response_language(question)
         return {
             **state,
+            "effective_question": effective_question,
             "intent": intent,
             "response_language": response_language,
             "retry_count": state.get("retry_count", 0),
@@ -83,23 +92,29 @@ def build_agent_graph(llm: CompletionGateway | None = None, sql_runner: SQLRunne
         }
 
     def prepare_context(state: AgentState) -> AgentState:
+        retrieved_schema, retrieved_metrics, sources = retrieve_rag_context(state.get("effective_question", state["question"]))
+        base_schema = state.get("schema_context") or DEFAULT_SCHEMA_CONTEXT
+        base_metrics = state.get("metric_context") or METRIC_CONTEXT
+        schema_context = f"{base_schema}\n\n相关数据字典（RAG）：\n{retrieved_schema}" if retrieved_schema else base_schema
+        metric_context = f"{base_metrics}\n\n相关指标字典（RAG）：\n{retrieved_metrics}" if retrieved_metrics else base_metrics
         return {
             **state,
-            "schema_context": state.get("schema_context") or DEFAULT_SCHEMA_CONTEXT,
-            "metric_context": state.get("metric_context") or METRIC_CONTEXT,
+            "schema_context": schema_context,
+            "metric_context": metric_context,
+            "retrieval_sources": sources,
             "trace": [*state.get("trace", []), "prepare_context:default_schema_and_metrics"],
         }
 
     def generate_sql(state: AgentState) -> AgentState:
         result = gateway.complete(
-            question=state["question"],
+            question=state.get("effective_question", state["question"]),
             schema_context=state["schema_context"],
             metric_context=state["metric_context"],
             intent=state["intent"],
             previous_sql=state.get("candidate_sql") if state.get("retry_count", 0) > 0 else None,
             sql_error=state.get("sql_error") if state.get("retry_count", 0) > 0 else None,
         )
-        plan = parse_sql_plan(result.text, default_intent=state["intent"], question=state["question"])
+        plan = parse_sql_plan(result.text, default_intent=state["intent"], question=state.get("effective_question", state["question"]))
         return {
             **state,
             "llm_response": result.text,
@@ -139,11 +154,7 @@ def build_agent_graph(llm: CompletionGateway | None = None, sql_runner: SQLRunne
 
     def finalize(state: AgentState) -> AgentState:
         plan = state.get("plan", {})
-        chart = {
-            "type": plan.get("chart_type", "table"),
-            "x": plan.get("chart_x"),
-            "y": plan.get("chart_y"),
-        }
+        chart = build_chart_spec(plan, state.get("columns", []), state.get("rows", []))
         return {
             **state,
             "chart": chart,
@@ -153,7 +164,7 @@ def build_agent_graph(llm: CompletionGateway | None = None, sql_runner: SQLRunne
 
     def summarize_result(state: AgentState) -> AgentState:
         result = gateway.summarize(
-            question=state["question"],
+            question=state.get("effective_question", state["question"]),
             intent=state["intent"],
             plan=state.get("plan", {}),
             columns=state.get("columns", []),

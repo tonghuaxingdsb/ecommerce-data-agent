@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from ecommerce_agent.agent import agent_graph
 from ecommerce_agent.config import get_settings
+from ecommerce_agent.conversation import ConversationStore, ConversationTurn
 
 
 class HealthResponse(BaseModel):
@@ -18,12 +19,14 @@ class HealthResponse(BaseModel):
 
 class AgentRequest(BaseModel):
     question: str = Field(..., min_length=1, examples=["近 30 天销售额多少？环比上个月呢？"])
+    conversation_id: str | None = Field(default=None, description="用于多轮追问的会话 ID")
     schema_context: str | None = None
     metric_context: str | None = None
 
 
 class AgentResponse(BaseModel):
     question: str
+    conversation_id: str | None
     intent: str
     answer: str
     llm_configured: bool
@@ -35,10 +38,12 @@ class AgentResponse(BaseModel):
     sql_error: str
     chart: dict[str, Any]
     trace: list[str]
+    retrieval_sources: list[str]
 
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    conversations = ConversationStore()
     app = FastAPI(title=settings.app_name, version="0.1.0")
 
     @app.get("/health", response_model=HealthResponse)
@@ -52,16 +57,25 @@ def create_app() -> FastAPI:
 
     @app.post("/api/agent/query", response_model=AgentResponse)
     def query_agent(request: AgentRequest) -> AgentResponse:
+        history = conversations.get(request.conversation_id) if request.conversation_id else []
         result = agent_graph.invoke(
             {
                 "question": request.question,
+                "conversation_id": request.conversation_id or "",
+                "history": history,
                 "schema_context": request.schema_context or "",
                 "metric_context": request.metric_context or "",
                 "trace": [],
             }
         )
+        if request.conversation_id:
+            conversations.append(
+                request.conversation_id,
+                ConversationTurn(question=request.question, answer=result["answer"], intent=result["intent"]),
+            )
         return AgentResponse(
             question=result["question"],
+            conversation_id=request.conversation_id,
             intent=result["intent"],
             answer=result["answer"],
             llm_configured=result["llm_configured"],
@@ -73,6 +87,7 @@ def create_app() -> FastAPI:
             sql_error=result.get("sql_error", ""),
             chart=result.get("chart", {}),
             trace=result["trace"],
+            retrieval_sources=result.get("retrieval_sources", []),
         )
 
     return app

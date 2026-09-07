@@ -4,10 +4,14 @@ import pandas as pd
 import streamlit as st
 
 from ecommerce_agent.agent import agent_graph
+from ecommerce_agent.conversation import ConversationTurn
 
 
 st.set_page_config(page_title="电商数据分析 Agent", layout="wide")
 st.title("电商数据分析 Agent")
+
+if "conversation_history" not in st.session_state:
+    st.session_state.conversation_history = []
 
 examples = [
     "近 30 天销售额多少？环比上个月呢？",
@@ -24,7 +28,16 @@ run_clicked = st.button("运行分析", type="primary")
 
 if run_clicked and question.strip():
     with st.spinner("分析中"):
-        result = agent_graph.invoke({"question": question.strip(), "trace": []})
+        result = agent_graph.invoke(
+            {
+                "question": question.strip(),
+                "history": st.session_state.conversation_history,
+                "trace": [],
+            }
+        )
+        st.session_state.conversation_history.append(
+            ConversationTurn(question=question.strip(), answer=result.get("answer", ""), intent=result.get("intent", ""))
+        )
 
     st.subheader("分析结论")
     st.write(result.get("answer", ""))
@@ -61,3 +74,5 @@ if run_clicked and question.strip():
         st.caption("用于检查 Agent 流程，正式面向业务用户时可以隐藏。")
         st.code(result.get("executed_sql") or result.get("candidate_sql") or "", language="sql")
         st.json(result.get("trace", []))
+        st.caption("RAG 命中")
+        st.write(result.get("retrieval_sources", []))
