@@ -272,7 +272,7 @@ CREATE TABLE dim_region (
 - `phase2-development-log.md`：难点、痛点、解决办法和后续建议。
 
 **当前验收状态**
-- `uv run pytest -q`：15 passed，1 skipped。
+- `uv run pytest -q`：16 passed，1 skipped。
 - `uv run python -m compileall -q src scripts apps`：通过。
 - API 增加 `conversation_id` 与 `retrieval_sources` 字段；Streamlit 支持 session state 多轮追问。
 - 时间周期以 `max(fact_orders.order_date)` 为业务锚点，避免固定快照数据与机器当前日期错位。
