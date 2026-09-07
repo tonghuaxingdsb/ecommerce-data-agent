@@ -17,6 +17,18 @@ def test_time_intelligence_supports_custom_window_and_yoy():
     assert "change_pct" in sql
 
 
+def test_time_intelligence_uses_calendar_boundaries():
+    intent = parse_time_intent("本月销售额环比")
+    assert intent.calendar_period == "month"
+    sql, _ = build_sales_overview_sql("本月销售额环比")
+    assert "date_trunc('month', end_date)" in sql
+
+    intent = parse_time_intent("上周销售额")
+    assert intent.calendar_period == "week"
+    sql, _ = build_sales_overview_sql("上周销售额")
+    assert "date_trunc('week', end_date)" in sql
+
+
 def test_dictionary_retrieval_returns_metric_and_relevant_fields():
     schema, metrics, sources = retrieve_rag_context("华东区 GMV 和复购率")
     assert "fact_orders.amount" in schema
@@ -48,4 +60,3 @@ def test_chart_spec_infers_line_chart_for_date_results():
     assert chart["type"] == "line"
     assert chart["x"] == "order_date"
     assert chart["y"] == "gmv"
-

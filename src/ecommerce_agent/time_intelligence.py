@@ -10,24 +10,31 @@ class TimeIntent:
     comparison: str | None = "mom"
     label: str = "近 30 天"
     anchor_sql: str = "(SELECT max(order_date) FROM fact_orders)"
+    calendar_period: str | None = None
 
 
 def parse_time_intent(question: str) -> TimeIntent:
     text = question.lower().replace(" ", "")
     day_match = re.search(r"近(\d+)(?:天|日)", text)
+    calendar_period: str | None = None
     if day_match:
         days = max(1, min(int(day_match.group(1)), 366))
         label = f"近 {days} 天"
     elif "上周" in text or "上星期" in text:
         days, label = 7, "上周"
+        calendar_period = "week"
     elif "本月" in text or "这个月" in text:
         days, label = 30, "本月"
+        calendar_period = "month"
     elif "上月" in text or "上个月" in text:
         days, label = 30, "上个月"
+        calendar_period = "month"
     elif "今年" in text or "年度" in text:
         days, label = 365, "今年"
+        calendar_period = "year"
     else:
         days, label = 30, "近 30 天"
+        calendar_period = None
 
     if "同比" in text or "去年同期" in text:
         comparison = "yoy"
@@ -35,7 +42,7 @@ def parse_time_intent(question: str) -> TimeIntent:
         comparison = "mom"
     else:
         comparison = None
-    return TimeIntent(window_days=days, comparison=comparison, label=label)
+    return TimeIntent(window_days=days, comparison=comparison, label=label, calendar_period=calendar_period)
 
 
 def build_period_sql(time_intent: TimeIntent) -> str:
@@ -52,11 +59,27 @@ def build_period_sql(time_intent: TimeIntent) -> str:
 def build_sales_overview_sql(question: str, *, area_filter: str | None = None) -> tuple[str, TimeIntent]:
     intent = parse_time_intent(question)
     days = intent.window_days
-    current_predicate = f"o.order_date BETWEEN end_date - INTERVAL '{days - 1} days' AND end_date"
-    if intent.comparison == "yoy":
-        comparison_predicate = f"o.order_date BETWEEN end_date - INTERVAL '{days + 364} days' AND end_date - INTERVAL '365 days'"
+    if intent.calendar_period == "month":
+        current_predicate = "o.order_date >= date_trunc('month', end_date)::date AND o.order_date <= end_date"
+        if intent.comparison == "yoy":
+            comparison_predicate = "o.order_date >= date_trunc('month', end_date - INTERVAL '1 year')::date AND o.order_date <= end_date - INTERVAL '1 year'"
+        else:
+            comparison_predicate = "o.order_date >= date_trunc('month', end_date - INTERVAL '1 month')::date AND o.order_date < date_trunc('month', end_date)::date"
+    elif intent.calendar_period == "week":
+        current_predicate = "o.order_date >= date_trunc('week', end_date)::date AND o.order_date <= end_date"
+        if intent.comparison == "yoy":
+            comparison_predicate = "o.order_date >= date_trunc('week', end_date - INTERVAL '1 year')::date AND o.order_date <= end_date - INTERVAL '1 year'"
+        else:
+            comparison_predicate = "o.order_date >= date_trunc('week', end_date)::date - INTERVAL '7 days' AND o.order_date < date_trunc('week', end_date)::date"
+    elif intent.calendar_period == "year":
+        current_predicate = "o.order_date >= date_trunc('year', end_date)::date AND o.order_date <= end_date"
+        comparison_predicate = "o.order_date >= date_trunc('year', end_date - INTERVAL '1 year')::date AND o.order_date <= end_date - INTERVAL '1 year'"
     else:
-        comparison_predicate = f"o.order_date BETWEEN end_date - INTERVAL '{(days * 2) - 1} days' AND end_date - INTERVAL '{days} days'"
+        current_predicate = f"o.order_date BETWEEN end_date - INTERVAL '{days - 1} days' AND end_date"
+        if intent.comparison == "yoy":
+            comparison_predicate = f"o.order_date BETWEEN end_date - INTERVAL '{days + 364} days' AND end_date - INTERVAL '365 days'"
+        else:
+            comparison_predicate = f"o.order_date BETWEEN end_date - INTERVAL '{(days * 2) - 1} days' AND end_date - INTERVAL '{days} days'"
     region_join = "JOIN dim_region r ON r.region_id = o.region_id" if area_filter else ""
     region_where = f"AND r.area = '{area_filter}'" if area_filter else ""
     comparison_alias = "previous" if intent.comparison != "yoy" else "same_period_last_year"
@@ -85,4 +108,3 @@ SELECT current_gmv, current_orders, current_units,
 FROM periods
 """.strip()
     return sql, intent
-
