@@ -9,6 +9,7 @@ Phase 0 delivers the project skeleton for an ecommerce natural-language data ana
 - Phase 1 MVP chain: Text-to-SQL, read-only SQL validation/execution, bounded ReAct retry, natural-language result analysis and a Streamlit demo.
 - Phase 2 experience layer: dictionary retrieval, time-intelligence SQL, multi-turn clarification, automatic chart selection and result summaries.
 - Phase 3 engineering layer: pluggable LLM providers, LangGraph SSE progress events, SQL hardening and JSONL audit logging.
+- Next.js 16 frontend with live Agent progress, ECharts visualizations, result tables and SQL/RAG diagnostics.
 
 ## Quick Start
 
@@ -38,13 +39,33 @@ Example request:
 
 The default seed command writes CSV files to `data/generated/` with 120000 orders, 20000 users, 600 products and 6 months of order history.
 
-## Streamlit Demo
+## Next.js Frontend
+
+Run the FastAPI service first, then start the web app in another terminal:
+
+```powershell
+Set-Location apps/web
+Copy-Item .env.example .env.local
+npm install
+npm run dev
+```
+
+Open `http://127.0.0.1:3000`. The frontend consumes `POST /api/agent/query/stream` with a fetch stream, renders LangGraph progress in real time, and displays business conclusions, metrics, ECharts, result tables and a collapsible debugging panel.
+
+Production verification:
+
+```powershell
+npm run typecheck
+npm run build
+```
+
+## Legacy Streamlit Demo
 
 ```powershell
 uv run streamlit run apps/streamlit_app.py
 ```
 
-The demo calls the same LangGraph chain as the API. The main view shows the natural-language business conclusion, key metrics, result table and a basic chart when the result shape supports it. Generated SQL and trace are kept in the collapsed debug panel.
+The legacy demo calls the same LangGraph chain as the API. It remains available as a lightweight Python-only fallback.
 
 ## Phase 2 capabilities
 
@@ -61,6 +82,7 @@ See [phase2-development-log.md](phase2-development-log.md) for the implementatio
 - Set `LLM_PROVIDER=deepseek` for the OpenAI-compatible DeepSeek gateway or `LLM_PROVIDER=mock` for an offline deterministic provider.
 - SQL validation additionally enforces a maximum length, rejects non-public schemas and blocks dangerous configuration/file functions.
 - API requests append redacted audit records to `AUDIT_LOG_PATH` (default `logs/audit.jsonl`). The log stores a SQL hash and sanitized preview rather than raw literals.
+- The Next.js frontend consumes POST-based SSE through `fetch()`/`ReadableStream`; FastAPI allows only the configured local `CORS_ORIGINS` by default.
 
 See [phase3-development-log.md](phase3-development-log.md) for engineering notes and verification limits.
 

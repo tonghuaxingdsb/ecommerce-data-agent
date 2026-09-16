@@ -282,6 +282,7 @@ CREATE TABLE dim_region (
 - [x] LangGraph 状态图重构，SSE 实时展示推理链路
 - [x] 模型可插拔抽象层
 - [x] 安全加固 + 审计日志
+- [x] 前端换 Next.js
 
 #### Phase 3 开发记录（2026-09-16）
 
@@ -290,15 +291,17 @@ CREATE TABLE dim_region (
 - `src/ecommerce_agent/main.py`：新增 `/api/agent/query/stream` SSE 接口。
 - `src/ecommerce_agent/llm.py`：抽象 `CompletionGateway`，支持 DeepSeek/离线规则 provider。
 - `src/ecommerce_agent/audit.py`：脱敏 JSONL 审计日志。
+- `apps/web/`：Next.js 16 + TypeScript 前端，包含 SSE 对话、节点进度、ECharts、指标卡、结果表与调试面板。
 - `tests/test_api.py` / `tests/test_llm_provider.py` / `tests/test_security_audit.py`：覆盖工程化关键路径。
 - `phase3-development-log.md`：记录难点、解决办法和验收限制。
 
 **当前验收状态**
-- `uv run pytest -q`：24 passed，1 skipped，1 warning。
+- `uv run pytest -q`：26 passed，1 warning；包含真实 PostgreSQL 连接测试。
 - `uv run python -m compileall -q src scripts apps`：通过。
+- `npm run typecheck` / `npm run build`：通过，首页完成静态预渲染。
 - SQL 安全校验新增跨 schema、危险函数、控制字符和长度限制；API 支持 JSON 与 SSE 两种调用方式。
+- 浏览器真实查询验证：SSE 展示 6 个 LangGraph 节点，返回近 30 天销售分析、指标卡和结果表。
 - 详细问题记录见 `phase3-development-log.md`。
-- [ ] 前端换 Next.js
 
 ### Phase 4：打磨与简历（第 8 周）
 - [ ] 自建评测集（50 条业务问题，量化准确率）

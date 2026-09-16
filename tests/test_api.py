@@ -28,3 +28,13 @@ def test_api_rejects_unbounded_question():
     client = TestClient(main_module.create_app())
     response = client.post("/api/agent/query/stream", json={"question": "x" * 2001})
     assert response.status_code == 422
+
+
+def test_api_allows_nextjs_development_origin():
+    client = TestClient(main_module.create_app())
+    response = client.options(
+        "/api/agent/query/stream",
+        headers={"Origin": "http://localhost:3000", "Access-Control-Request-Method": "POST"},
+    )
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://localhost:3000"

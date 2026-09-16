@@ -5,5 +5,9 @@ __pycache__/
 .ruff_cache/
 .codex/
 logs/
+apps/web/node_modules/
+apps/web/.next/
+apps/web/out/
+*.tsbuildinfo
 data/generated*/
 *.pyc

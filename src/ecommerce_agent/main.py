@@ -5,6 +5,7 @@ from uuid import uuid4
 from typing import Any
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from fastapi.responses import StreamingResponse
 
@@ -50,6 +51,13 @@ def create_app() -> FastAPI:
     conversations = ConversationStore()
     audit_logger = AuditLogger(settings.audit_log_path)
     app = FastAPI(title=settings.app_name, version="0.1.0")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()],
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Content-Type", "Accept"],
+    )
 
     @app.get("/health", response_model=HealthResponse)
     def health() -> HealthResponse:

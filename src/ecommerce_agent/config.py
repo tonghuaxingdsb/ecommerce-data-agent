@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     sql_max_length: int = Field(default=20000, ge=1000, le=100000)
     sql_max_retries: int = Field(default=2, ge=0, le=5)
     audit_log_path: str = "logs/audit.jsonl"
+    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 
     model_config = SettingsConfigDict(
         env_file=".env",
