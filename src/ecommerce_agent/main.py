@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
+from fastapi.responses import StreamingResponse
 
-from ecommerce_agent.agent import agent_graph
+from ecommerce_agent.agent import agent_graph, stream_agent_events
 from ecommerce_agent.config import get_settings
 from ecommerce_agent.conversation import ConversationStore, ConversationTurn
 
@@ -18,7 +20,7 @@ class HealthResponse(BaseModel):
 
 
 class AgentRequest(BaseModel):
-    question: str = Field(..., min_length=1, examples=["近 30 天销售额多少？环比上个月呢？"])
+    question: str = Field(..., min_length=1, max_length=2000, examples=["近 30 天销售额多少？环比上个月呢？"])
     conversation_id: str | None = Field(default=None, description="用于多轮追问的会话 ID")
     schema_context: str | None = None
     metric_context: str | None = None
@@ -90,7 +92,43 @@ def create_app() -> FastAPI:
             retrieval_sources=result.get("retrieval_sources", []),
         )
 
+    @app.post("/api/agent/query/stream")
+    def stream_query_agent(request: AgentRequest) -> StreamingResponse:
+        """Stream graph progress as Server-Sent Events."""
+        history = conversations.get(request.conversation_id) if request.conversation_id else []
+
+        def event_generator():
+            for event in stream_agent_events(
+                {
+                    "question": request.question,
+                    "conversation_id": request.conversation_id or "",
+                    "history": history,
+                    "schema_context": request.schema_context or "",
+                    "metric_context": request.metric_context or "",
+                    "trace": [],
+                }
+            ):
+                if event.get("event") == "result" and request.conversation_id:
+                    result = event["result"]
+                    conversations.append(
+                        request.conversation_id,
+                        ConversationTurn(question=request.question, answer=result.get("answer", ""), intent=result.get("intent", "")),
+                    )
+                yield _format_sse_event(event)
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
     return app
+
+
+def _format_sse_event(event: dict[str, Any]) -> str:
+    event_name = str(event.get("event") or "message")
+    payload = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
+    return f"event: {event_name}\ndata: {payload}\n\n"
 
 
 app = create_app()
