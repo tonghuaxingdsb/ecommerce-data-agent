@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 from openai import OpenAI
 
@@ -30,11 +30,40 @@ class LLMResult:
     configured: bool
 
 
+class CompletionGateway(Protocol):
+    @property
+    def is_configured(self) -> bool: ...
+
+    def complete(
+        self,
+        question: str,
+        schema_context: str,
+        metric_context: str,
+        intent: str,
+        previous_sql: str | None = None,
+        sql_error: str | None = None,
+    ) -> LLMResult: ...
+
+    def summarize(
+        self,
+        question: str,
+        intent: str,
+        plan: dict[str, Any],
+        columns: list[str],
+        rows: list[dict[str, Any]],
+        language: str,
+    ) -> LLMResult: ...
+
+
 class DeepSeekGateway:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
         self._client = (
-            OpenAI(api_key=self.settings.deepseek_api_key, base_url=self.settings.deepseek_base_url)
+            OpenAI(
+                api_key=self.settings.deepseek_api_key,
+                base_url=self.settings.deepseek_base_url,
+                timeout=self.settings.llm_request_timeout_ms / 1000,
+            )
             if self.settings.deepseek_api_key
             else None
         )
@@ -202,4 +231,24 @@ few-shot 示例：
 2. 引用关键数值和排序/对比结果。
 3. 说明一个可能的业务判断或下一步拆解方向。
 4. 不要输出 SQL，不要提“数据库返回了几行”作为主要结论。
-""".strip()
+        """.strip()
+
+
+class RuleBasedGateway(DeepSeekGateway):
+    """Explicit offline provider used for demos, tests and disconnected hosts."""
+
+    def __init__(self, settings: Settings | None = None) -> None:
+        runtime = settings or get_settings()
+        # Avoid creating an OpenAI client even if a key happens to be present.
+        self.settings = runtime
+        self._client = None
+
+
+def build_gateway(settings: Settings | None = None) -> CompletionGateway:
+    runtime = settings or get_settings()
+    provider = runtime.llm_provider.lower().strip()
+    if provider in {"mock", "rule_based", "offline"}:
+        return RuleBasedGateway(runtime)
+    if provider == "deepseek":
+        return DeepSeekGateway(runtime)
+    raise ValueError(f"不支持的 LLM_PROVIDER：{runtime.llm_provider}")

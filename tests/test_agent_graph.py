@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from ecommerce_agent.agent import build_agent_graph
+from ecommerce_agent.agent import build_agent_graph, stream_agent_events
 from ecommerce_agent.llm import LLMResult
 from ecommerce_agent.sql_tool import SQLExecutionResult
 
@@ -108,3 +108,10 @@ def test_agent_graph_retries_after_sql_error():
     assert result["row_count"] == 1
     assert result["sql_error"] == ""
     assert "react_retry:1" in result["trace"]
+
+
+def test_agent_graph_streams_trace_and_final_result():
+    events = list(stream_agent_events({"question": "近 30 天销售额", "trace": []}, llm=StubGateway(), sql_runner=stub_sql_runner))
+    assert events[0]["event"] == "trace"
+    assert events[-1]["event"] == "result"
+    assert events[-1]["result"]["row_count"] == 1

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Protocol, TypedDict
+from typing import Any, Callable, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
@@ -8,36 +8,11 @@ from ecommerce_agent.answering import build_fallback_analysis
 from ecommerce_agent.charting import build_chart_spec
 from ecommerce_agent.conversation import ConversationTurn, resolve_follow_up
 from ecommerce_agent.language import detect_response_language
-from ecommerce_agent.llm import DeepSeekGateway, LLMResult
+from ecommerce_agent.llm import CompletionGateway, LLMResult, build_gateway
 from ecommerce_agent.rag import retrieve_rag_context
 from ecommerce_agent.schema_context import DEFAULT_SCHEMA_CONTEXT, METRIC_CONTEXT
 from ecommerce_agent.sql_tool import SQLExecutionResult, execute_sql
 from ecommerce_agent.text_to_sql import parse_sql_plan
-
-
-class CompletionGateway(Protocol):
-    @property
-    def is_configured(self) -> bool: ...
-
-    def complete(
-        self,
-        question: str,
-        schema_context: str,
-        metric_context: str,
-        intent: str,
-        previous_sql: str | None = None,
-        sql_error: str | None = None,
-    ) -> LLMResult: ...
-
-    def summarize(
-        self,
-        question: str,
-        intent: str,
-        plan: dict[str, Any],
-        columns: list[str],
-        rows: list[dict[str, Any]],
-        language: str,
-    ) -> LLMResult: ...
 
 
 class AgentState(TypedDict, total=False):
@@ -73,7 +48,7 @@ SQLRunner = Callable[[str], SQLExecutionResult]
 
 
 def build_agent_graph(llm: CompletionGateway | None = None, sql_runner: SQLRunner | None = None, max_retries: int = 2):
-    gateway = llm or DeepSeekGateway()
+    gateway = llm or build_gateway()
     run_sql = sql_runner or execute_sql
 
     def classify_intent(state: AgentState) -> AgentState:
@@ -262,3 +237,47 @@ def format_sample_rows(rows: list[dict[str, Any]], columns: list[str], max_rows:
 
 
 agent_graph = build_agent_graph()
+
+
+def stream_agent_events(
+    input_state: AgentState,
+    *,
+    llm: CompletionGateway | None = None,
+    sql_runner: SQLRunner | None = None,
+    max_retries: int = 2,
+):
+    """Yield stable, small events while the compiled graph executes.
+
+    Consumers do not receive the entire internal state (which may contain
+    conversation history or prompts); only node name, latest trace item and a
+    final answer/result payload are exposed.
+    """
+    graph = build_agent_graph(llm=llm, sql_runner=sql_runner, max_retries=max_retries)
+    final_state: AgentState = {}
+    for update in graph.stream(input_state, stream_mode="updates"):
+        for node, state in update.items():
+            final_state = {**final_state, **state}
+            trace = state.get("trace", [])
+            yield {
+                "event": "trace",
+                "node": node,
+                "trace": trace[-1] if trace else node,
+            }
+    yield {
+        "event": "result",
+        "node": "finalize",
+        "result": {
+            "question": final_state.get("question", ""),
+            "intent": final_state.get("intent", ""),
+            "answer": final_state.get("answer", ""),
+            "sql": final_state.get("executed_sql") or final_state.get("candidate_sql", ""),
+            "columns": final_state.get("columns", []),
+            "rows": final_state.get("rows", []),
+            "row_count": final_state.get("row_count", 0),
+            "elapsed_ms": final_state.get("elapsed_ms", 0),
+            "sql_error": final_state.get("sql_error", ""),
+            "chart": final_state.get("chart", {}),
+            "trace": final_state.get("trace", []),
+            "retrieval_sources": final_state.get("retrieval_sources", []),
+        },
+    }
