@@ -18,7 +18,9 @@ class Settings(BaseSettings):
     llm_request_timeout_ms: int = Field(default=30000, ge=1000, le=120000)
     sql_max_rows: int = Field(default=200, ge=1, le=1000)
     sql_timeout_ms: int = Field(default=5000, ge=100, le=60000)
+    sql_max_length: int = Field(default=20000, ge=1000, le=100000)
     sql_max_retries: int = Field(default=2, ge=0, le=5)
+    audit_log_path: str = "logs/audit.jsonl"
 
     model_config = SettingsConfigDict(
         env_file=".env",

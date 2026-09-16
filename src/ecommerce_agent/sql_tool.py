@@ -41,6 +41,8 @@ DANGEROUS_FUNCTIONS = {
     "lo_import",
     "lo_export",
     "dblink",
+    "current_setting",
+    "set_config",
 }
 
 
@@ -67,10 +69,14 @@ class SQLSafetyError(ValueError):
     pass
 
 
-def validate_readonly_sql(sql: str, max_rows: int = 200, allowed_tables: set[str] | None = None) -> SafeSQL:
+def validate_readonly_sql(sql: str, max_rows: int = 200, allowed_tables: set[str] | None = None, max_length: int = 20000) -> SafeSQL:
     normalized_sql = strip_trailing_semicolon(sql)
     if not normalized_sql:
         raise SQLSafetyError("SQL 为空。")
+    if "\x00" in normalized_sql:
+        raise SQLSafetyError("SQL 包含非法控制字符。")
+    if len(normalized_sql) > max_length:
+        raise SQLSafetyError(f"SQL 超过长度限制（最多 {max_length} 个字符）。")
 
     expressions = [expression for expression in parse(normalized_sql, read="postgres") if expression is not None]
     if len(expressions) != 1:
@@ -93,7 +99,11 @@ def validate_readonly_sql(sql: str, max_rows: int = 200, allowed_tables: set[str
 
     whitelist = allowed_tables or ALLOWED_TABLES
     cte_names = {cte.alias_or_name for cte in expression.find_all(exp.CTE) if cte.alias_or_name}
-    referenced_tables = tuple(sorted({table.name for table in expression.find_all(exp.Table) if table.name not in cte_names}))
+    table_expressions = [table for table in expression.find_all(exp.Table) if table.name not in cte_names]
+    foreign_schemas = sorted({str(table.db) for table in table_expressions if table.db and str(table.db).lower() != "public"})
+    if foreign_schemas:
+        raise SQLSafetyError(f"SQL 引用了非白名单 schema：{', '.join(foreign_schemas)}。")
+    referenced_tables = tuple(sorted({table.name for table in table_expressions}))
     unknown_tables = [table for table in referenced_tables if table not in whitelist]
     if unknown_tables:
         raise SQLSafetyError(f"SQL 引用了非白名单表：{', '.join(unknown_tables)}。")
@@ -106,7 +116,7 @@ def execute_sql(sql: str, settings: Settings | None = None) -> SQLExecutionResul
     runtime_settings = settings or get_settings()
     started_at = perf_counter()
     try:
-        safe_sql = validate_readonly_sql(sql, max_rows=runtime_settings.sql_max_rows)
+        safe_sql = validate_readonly_sql(sql, max_rows=runtime_settings.sql_max_rows, max_length=runtime_settings.sql_max_length)
         with psycopg.connect(runtime_settings.database_url, row_factory=dict_row) as conn:
             with conn.cursor() as cursor:
                 cursor.execute("BEGIN READ ONLY")

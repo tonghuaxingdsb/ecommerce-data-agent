@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from uuid import uuid4
 from typing import Any
 
 from fastapi import FastAPI
@@ -8,6 +9,7 @@ from pydantic import BaseModel, Field
 from fastapi.responses import StreamingResponse
 
 from ecommerce_agent.agent import agent_graph, stream_agent_events
+from ecommerce_agent.audit import AuditLogger
 from ecommerce_agent.config import get_settings
 from ecommerce_agent.conversation import ConversationStore, ConversationTurn
 
@@ -46,6 +48,7 @@ class AgentResponse(BaseModel):
 def create_app() -> FastAPI:
     settings = get_settings()
     conversations = ConversationStore()
+    audit_logger = AuditLogger(settings.audit_log_path)
     app = FastAPI(title=settings.app_name, version="0.1.0")
 
     @app.get("/health", response_model=HealthResponse)
@@ -75,6 +78,17 @@ def create_app() -> FastAPI:
                 request.conversation_id,
                 ConversationTurn(question=request.question, answer=result["answer"], intent=result["intent"]),
             )
+        audit_logger.log_query(
+            request_id=uuid4().hex,
+            conversation_id=request.conversation_id,
+            question=request.question,
+            intent=result["intent"],
+            sql=result.get("executed_sql") or result.get("candidate_sql") or "",
+            ok=not bool(result.get("sql_error")),
+            row_count=result.get("row_count", 0),
+            elapsed_ms=result.get("elapsed_ms", 0),
+            error=result.get("sql_error", ""),
+        )
         return AgentResponse(
             question=result["question"],
             conversation_id=request.conversation_id,
@@ -113,6 +127,19 @@ def create_app() -> FastAPI:
                     conversations.append(
                         request.conversation_id,
                         ConversationTurn(question=request.question, answer=result.get("answer", ""), intent=result.get("intent", "")),
+                    )
+                if event.get("event") == "result":
+                    result = event["result"]
+                    audit_logger.log_query(
+                        request_id=uuid4().hex,
+                        conversation_id=request.conversation_id,
+                        question=request.question,
+                        intent=result.get("intent", ""),
+                        sql=result.get("sql", ""),
+                        ok=not bool(result.get("sql_error")),
+                        row_count=result.get("row_count", 0),
+                        elapsed_ms=result.get("elapsed_ms", 0),
+                        error=result.get("sql_error", ""),
                     )
                 yield _format_sse_event(event)
 
