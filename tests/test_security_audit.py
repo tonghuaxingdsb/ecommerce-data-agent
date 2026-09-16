@@ -13,6 +13,8 @@ def test_sql_safety_rejects_foreign_schema_and_oversized_query():
         validate_readonly_sql("SELECT * FROM pg_catalog.fact_orders")
     with pytest.raises(SQLSafetyError, match="长度"):
         validate_readonly_sql("SELECT 1 " + ("x" * 100), max_length=20)
+    with pytest.raises(SQLSafetyError, match="白名单"):
+        validate_readonly_sql("SELECT 1 FROM fact_orders", allowed_tables=set())
 
 
 def test_audit_logger_redacts_literals_and_writes_jsonl(tmp_path):

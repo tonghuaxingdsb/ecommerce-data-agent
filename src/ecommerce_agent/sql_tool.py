@@ -73,6 +73,8 @@ def validate_readonly_sql(sql: str, max_rows: int = 200, allowed_tables: set[str
     normalized_sql = strip_trailing_semicolon(sql)
     if not normalized_sql:
         raise SQLSafetyError("SQL 为空。")
+    if max_rows < 1:
+        raise SQLSafetyError("结果行数上限必须大于 0。")
     if "\x00" in normalized_sql:
         raise SQLSafetyError("SQL 包含非法控制字符。")
     if len(normalized_sql) > max_length:
@@ -97,7 +99,7 @@ def validate_readonly_sql(sql: str, max_rows: int = 200, allowed_tables: set[str
     if blocked_functions:
         raise SQLSafetyError(f"SQL 中包含禁止函数：{', '.join(blocked_functions)}。")
 
-    whitelist = allowed_tables or ALLOWED_TABLES
+    whitelist = ALLOWED_TABLES if allowed_tables is None else allowed_tables
     cte_names = {cte.alias_or_name for cte in expression.find_all(exp.CTE) if cte.alias_or_name}
     table_expressions = [table for table in expression.find_all(exp.Table) if table.name not in cte_names]
     foreign_schemas = sorted({str(table.db) for table in table_expressions if table.db and str(table.db).lower() != "public"})
