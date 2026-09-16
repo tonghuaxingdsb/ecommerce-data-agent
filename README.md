@@ -8,6 +8,7 @@ Phase 0 delivers the project skeleton for an ecommerce natural-language data ana
 - DeepSeek API gateway through the OpenAI-compatible SDK. It calls DeepSeek when `DEEPSEEK_API_KEY` is configured and returns a local mock response otherwise.
 - Phase 1 MVP chain: Text-to-SQL, read-only SQL validation/execution, bounded ReAct retry, natural-language result analysis and a Streamlit demo.
 - Phase 2 experience layer: dictionary retrieval, time-intelligence SQL, multi-turn clarification, automatic chart selection and result summaries.
+- Phase 3 engineering layer: pluggable LLM providers, LangGraph SSE progress events, SQL hardening and JSONL audit logging.
 
 ## Quick Start
 
@@ -53,6 +54,15 @@ The demo calls the same LangGraph chain as the API. The main view shows the natu
 - Ambiguous questions such as `上个月卖得怎么样？` produce a clarification instead of guessing a metric.
 
 See [phase2-development-log.md](phase2-development-log.md) for the implementation record, verification results and encountered problems/solutions.
+
+## Phase 3 engineering capabilities
+
+- `POST /api/agent/query/stream` returns Server-Sent Events: node-level trace events followed by a final result event.
+- Set `LLM_PROVIDER=deepseek` for the OpenAI-compatible DeepSeek gateway or `LLM_PROVIDER=mock` for an offline deterministic provider.
+- SQL validation additionally enforces a maximum length, rejects non-public schemas and blocks dangerous configuration/file functions.
+- API requests append redacted audit records to `AUDIT_LOG_PATH` (default `logs/audit.jsonl`). The log stores a SQL hash and sanitized preview rather than raw literals.
+
+See [phase3-development-log.md](phase3-development-log.md) for engineering notes and verification limits.
 
 ## SQL Safety
 

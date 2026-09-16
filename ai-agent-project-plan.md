@@ -279,9 +279,25 @@ CREATE TABLE dim_region (
 - 详细问题记录见 `phase2-development-log.md`。
 
 ### Phase 3：工程化（第 6–7 周）
-- [ ] LangGraph 状态图重构，SSE 实时展示推理链路
-- [ ] 模型可插拔抽象层
-- [ ] 安全加固 + 审计日志
+- [x] LangGraph 状态图重构，SSE 实时展示推理链路
+- [x] 模型可插拔抽象层
+- [x] 安全加固 + 审计日志
+
+#### Phase 3 开发记录（2026-09-16）
+
+**已交付文件**
+- `src/ecommerce_agent/agent.py`：增加 `stream_agent_events()`，以稳定事件协议输出状态图进度。
+- `src/ecommerce_agent/main.py`：新增 `/api/agent/query/stream` SSE 接口。
+- `src/ecommerce_agent/llm.py`：抽象 `CompletionGateway`，支持 DeepSeek/离线规则 provider。
+- `src/ecommerce_agent/audit.py`：脱敏 JSONL 审计日志。
+- `tests/test_api.py` / `tests/test_llm_provider.py` / `tests/test_security_audit.py`：覆盖工程化关键路径。
+- `phase3-development-log.md`：记录难点、解决办法和验收限制。
+
+**当前验收状态**
+- `uv run pytest -q`：24 passed，1 skipped，1 warning。
+- `uv run python -m compileall -q src scripts apps`：通过。
+- SQL 安全校验新增跨 schema、危险函数、控制字符和长度限制；API 支持 JSON 与 SSE 两种调用方式。
+- 详细问题记录见 `phase3-development-log.md`。
 - [ ] 前端换 Next.js
 
 ### Phase 4：打磨与简历（第 8 周）
