@@ -284,6 +284,7 @@ CREATE TABLE dim_region (
 - [x] 安全加固 + 审计日志
 - [x] 前端换 Next.js
 - [x] 结构化语义计划 + 通用 SQL 编译 + 执行前语义校验
+- [x] Next.js 多轮记录、多会话创建/切换与浏览器历史恢复
 
 #### Phase 3 开发记录（2026-09-16）
 
@@ -294,7 +295,7 @@ CREATE TABLE dim_region (
 - `src/ecommerce_agent/semantic.py`：新增 `QuerySpec`、指标/维度组合式 SQL 编译器和语义校验器；显式业务约束优先于模型猜测。
 - `src/ecommerce_agent/agent.py`：在 SQL 生成与执行之间新增语义校验节点，错误反馈进入有限 ReAct 修复回路。
 - `src/ecommerce_agent/audit.py`：脱敏 JSONL 审计日志。
-- `apps/web/`：Next.js 16 + TypeScript 前端，包含 SSE 对话、节点进度、ECharts、指标卡、结果表与调试面板。
+- `apps/web/`：Next.js 16 + TypeScript 前端，包含多轮/多会话历史、SSE 节点进度、ECharts、指标卡、结果表与调试面板；完成记录以有界 `localStorage` 快照跨刷新恢复。
 - `tests/test_api.py` / `tests/test_llm_provider.py` / `tests/test_security_audit.py`：覆盖工程化关键路径。
 - `phase3-development-log.md`：记录难点、解决办法和验收限制。
 
@@ -303,7 +304,8 @@ CREATE TABLE dim_region (
 - `uv run python -m compileall -q src scripts apps`：通过。
 - `npm run typecheck` / `npm run build`：通过，首页完成静态预渲染。
 - SQL 安全校验新增跨 schema、危险函数、控制字符和长度限制；API 支持 JSON 与 SSE 两种调用方式。
-- 浏览器真实查询验证：SSE 展示 6 个 LangGraph 节点，返回近 30 天销售分析、指标卡和结果表。
+- 浏览器真实查询验证：SSE 展示 7 个 LangGraph 节点，返回近 30 天销售分析、指标卡和结果表。
+- 多会话验证：同一会话两轮结果不互相覆盖，刷新后历史仍在；可新建独立会话并切回旧会话。后端上下文当前仍是进程内存，API 重启后的持久化上下文留待数据库会话存储阶段。
 - 详细问题记录见 `phase3-development-log.md`。
 
 ### Phase 4：打磨与简历（第 8 周）

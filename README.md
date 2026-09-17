@@ -10,7 +10,7 @@ Phase 0 delivers the project skeleton for an ecommerce natural-language data ana
 - Phase 2 experience layer: dictionary retrieval, time-intelligence SQL, multi-turn clarification, automatic chart selection and result summaries.
 - Phase 3 engineering layer: pluggable LLM providers, LangGraph SSE progress events, SQL hardening and JSONL audit logging.
 - Composable semantic query layer: the LLM produces a grounded `QuerySpec` (metrics, dimensions, filters, time and ranking), then SQL is generated and semantically validated before execution.
-- Next.js 16 frontend with live Agent progress, ECharts visualizations, result tables and SQL/RAG diagnostics.
+- Next.js 16 frontend with persistent multi-conversation history, live Agent progress, ECharts visualizations, result tables and SQL/RAG diagnostics.
 
 ## Quick Start
 
@@ -51,7 +51,7 @@ npm install
 npm run dev
 ```
 
-Open `http://127.0.0.1:3000`. The frontend consumes `POST /api/agent/query/stream` with a fetch stream, renders LangGraph progress in real time, and displays business conclusions, metrics, ECharts, result tables and a collapsible debugging panel.
+Open `http://127.0.0.1:3000`. The frontend consumes `POST /api/agent/query/stream` with a fetch stream, renders LangGraph progress in real time, and displays business conclusions, metrics, ECharts, result tables and a collapsible debugging panel. One conversation can retain multiple question/result turns, while **新建对话** creates an independent `conversation_id`. The browser keeps at most 20 conversations and 50 turns per conversation in `localStorage`, so completed UI history survives a page refresh.
 
 Production verification:
 
@@ -84,6 +84,8 @@ See [phase2-development-log.md](phase2-development-log.md) for the implementatio
 - SQL validation additionally enforces a maximum length, rejects non-public schemas and blocks dangerous configuration/file functions.
 - API requests append redacted audit records to `AUDIT_LOG_PATH` (default `logs/audit.jsonl`). The log stores a SQL hash and sanitized preview rather than raw literals.
 - The Next.js frontend consumes POST-based SSE through `fetch()`/`ReadableStream`; FastAPI allows only the configured local `CORS_ORIGINS` by default.
+- The frontend models `Conversation -> ChatTurn[]` instead of one global result. Every SSE event updates its originating turn, so a later question no longer overwrites earlier questions, progress, answers or tables.
+- Conversation history is browser-local. A FastAPI restart clears the current in-memory model context even though the rendered history remains available in `localStorage`; durable cross-device/server-side history is a later persistence task.
 - Questions are no longer routed from a single coarse intent directly to a fixed SQL template. Explicit user constraints are represented as `metrics + dimensions + filters + time_range + ranking`; the same metric can be combined with product, category, channel, region, membership level or date dimensions.
 - A semantic validation node runs before SQL execution. It rejects executable-but-wrong queries such as answering product repurchase rate with GMV ranking, and sends precise validation feedback through the bounded repair loop.
 - The offline provider uses the same semantic plan and SQL compiler. Its result banner identifies the active offline provider instead of incorrectly claiming that `DEEPSEEK_API_KEY` is missing.
