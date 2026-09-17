@@ -31,7 +31,9 @@ export function ResultChart({ result }: { result: AgentResult }) {
         </div>
         <span className="chart-tag">{type === "line" ? "趋势图" : "对比图"}</span>
       </div>
-      <ReactECharts option={option} style={{ height: 330 }} notMerge lazyUpdate />
+      <div className="chart-canvas">
+        <ReactECharts option={option} style={{ height: 330 }} notMerge lazyUpdate />
+      </div>
     </section>
   );
 }

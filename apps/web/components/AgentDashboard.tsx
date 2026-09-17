@@ -7,6 +7,7 @@ import { ResultChart } from "./ResultChart";
 
 const EXAMPLES = ["近 30 天销售额多少？环比上个月呢？", "Top10 商品是哪些？", "华东区老客复购率怎么样？", "近 30 天每日销售趋势"];
 const STORAGE_KEY = "commerce-lens-conversations-v1";
+const ACTIVE_CONVERSATION_KEY = "commerce-lens-active-conversation-v1";
 const MAX_CONVERSATIONS = 20;
 const MAX_TURNS = 50;
 const NODE_LABELS: Record<string, string> = {
@@ -44,12 +45,20 @@ export function AgentDashboard() {
   const [activeConversationId, setActiveConversationId] = useState("");
   const [hydrated, setHydrated] = useState(false);
   const abortController = useRef<AbortController | null>(null);
+  const transcriptRef = useRef<HTMLDivElement | null>(null);
+  const stickToLatest = useRef(true);
+  const pendingTurnFocus = useRef<string | null>(null);
 
   useEffect(() => {
     const restored = restoreConversations();
     const initial = restored.length > 0 ? restored : [createConversation()];
+    const storedActiveId = localStorage.getItem(ACTIVE_CONVERSATION_KEY);
+    const initialActive = initial.find((conversation) => conversation.id === storedActiveId)
+      ?? findMostRecentConversation(initial);
+    pendingTurnFocus.current = initialActive.turns.at(-1)?.id ?? null;
     setConversations(initial);
-    setActiveConversationId(initial[0].id);
+    setActiveConversationId(initialActive.id);
+    if (initialActive.turns.length > 0) setQuestion("");
     setHydrated(true);
   }, []);
 
@@ -62,11 +71,41 @@ export function AgentDashboard() {
     }
   }, [conversations, hydrated]);
 
+  useEffect(() => {
+    if (!hydrated || !activeConversationId) return;
+    try {
+      localStorage.setItem(ACTIVE_CONVERSATION_KEY, activeConversationId);
+    } catch {
+      // History navigation remains available for the current tab without storage.
+    }
+  }, [activeConversationId, hydrated]);
+
   const activeConversation = useMemo(
     () => conversations.find((conversation) => conversation.id === activeConversationId) ?? null,
     [activeConversationId, conversations],
   );
   const running = conversations.some((conversation) => conversation.turns.some((turn) => turn.running));
+
+  useEffect(() => {
+    if (!activeConversation) return;
+    const focusTurnId = pendingTurnFocus.current;
+    if (!focusTurnId && !stickToLatest.current) return;
+    const applyScroll = () => {
+      if (focusTurnId) {
+        focusTurn(focusTurnId, "auto");
+        pendingTurnFocus.current = null;
+        stickToLatest.current = false;
+        return;
+      }
+      scrollToLatest("auto");
+    };
+    const frame = requestAnimationFrame(applyScroll);
+    const retry = focusTurnId ? window.setTimeout(applyScroll, 180) : null;
+    return () => {
+      cancelAnimationFrame(frame);
+      if (retry !== null) window.clearTimeout(retry);
+    };
+  }, [activeConversation]);
 
   async function submit(event?: FormEvent) {
     event?.preventDefault();
@@ -84,6 +123,8 @@ export function AgentDashboard() {
       result: null,
       createdAt: Date.now(),
     };
+    pendingTurnFocus.current = turnId;
+    stickToLatest.current = false;
     appendTurn(conversationId, turn);
     setQuestion("");
     abortController.current = new AbortController();
@@ -143,6 +184,7 @@ export function AgentDashboard() {
   function startNewConversation() {
     if (running) return;
     const conversation = createConversation();
+    stickToLatest.current = true;
     setConversations((current) => [conversation, ...current].slice(0, MAX_CONVERSATIONS));
     setActiveConversationId(conversation.id);
     setQuestion(EXAMPLES[0]);
@@ -150,8 +192,38 @@ export function AgentDashboard() {
 
   function selectConversation(conversationId: string) {
     if (running || conversationId === activeConversationId) return;
+    const selected = conversations.find((conversation) => conversation.id === conversationId);
+    pendingTurnFocus.current = selected?.turns.at(-1)?.id ?? null;
+    stickToLatest.current = selected?.turns.length === 0;
     setActiveConversationId(conversationId);
     setQuestion("");
+  }
+
+  function scrollToLatest(behavior: ScrollBehavior = "smooth") {
+    const transcript = transcriptRef.current;
+    if (!transcript) return;
+    transcript.scrollTo({ top: transcript.scrollHeight, behavior });
+  }
+
+  function scrollToTurn(turnId: string) {
+    stickToLatest.current = false;
+    focusTurn(turnId, "smooth");
+  }
+
+  function focusTurn(turnId: string, behavior: ScrollBehavior) {
+    const transcript = transcriptRef.current;
+    const turn = document.getElementById(`turn-${turnId}`);
+    if (!transcript || !turn) return;
+    const transcriptTop = transcript.getBoundingClientRect().top;
+    const turnTop = turn.getBoundingClientRect().top;
+    transcript.scrollTo({ top: Math.max(0, transcript.scrollTop + turnTop - transcriptTop - 8), behavior });
+  }
+
+  function handleTranscriptScroll() {
+    const transcript = transcriptRef.current;
+    if (!transcript) return;
+    const distanceFromBottom = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight;
+    stickToLatest.current = distanceFromBottom < 80;
   }
 
   return (
@@ -179,17 +251,29 @@ export function AgentDashboard() {
             </div>
             <div className="conversation-list">
               {conversations.map((conversation) => (
-                <button
-                  type="button"
-                  className={conversation.id === activeConversationId ? "active" : ""}
-                  key={conversation.id}
-                  onClick={() => selectConversation(conversation.id)}
-                  disabled={running}
-                  title={conversation.title}
-                >
-                  <span>{conversation.title}</span>
-                  <small>{conversation.turns.length} 轮</small>
-                </button>
+                <div className="conversation-group" key={conversation.id}>
+                  <button
+                    type="button"
+                    className={conversation.id === activeConversationId ? "active" : ""}
+                    onClick={() => selectConversation(conversation.id)}
+                    disabled={running}
+                    title={conversation.title}
+                  >
+                    <span>{conversation.title}</span>
+                    <small>{conversation.turns.length} 轮</small>
+                  </button>
+                  {conversation.id === activeConversationId && conversation.turns.length > 0 && (
+                    <ol className="turn-history" aria-label="当前对话的全部轮次">
+                      {conversation.turns.map((turn, index) => (
+                        <li key={turn.id}>
+                          <button type="button" onClick={() => scrollToTurn(turn.id)} title={turn.question}>
+                            <b>{index + 1}</b><span>{turn.question}</span>
+                          </button>
+                        </li>
+                      ))}
+                    </ol>
+                  )}
+                </div>
               ))}
             </div>
           </nav>
@@ -229,9 +313,13 @@ export function AgentDashboard() {
             </div>
           </form>
 
-          {!activeConversation?.turns.length && <EmptyState />}
-          <div className="conversation-thread">
-            {activeConversation?.turns.map((turn) => <ConversationTurnView turn={turn} key={turn.id} />)}
+          <div className="conversation-scroll" ref={transcriptRef} onScroll={handleTranscriptScroll}>
+            {!activeConversation?.turns.length && <EmptyState />}
+            <div className="conversation-thread">
+              {activeConversation?.turns.map((turn) => (
+                <ConversationTurnView turn={turn} key={turn.id} turnId={`turn-${turn.id}`} />
+              ))}
+            </div>
           </div>
         </section>
       </div>
@@ -239,9 +327,9 @@ export function AgentDashboard() {
   );
 }
 
-function ConversationTurnView({ turn }: { turn: ChatTurn }) {
+function ConversationTurnView({ turn, turnId }: { turn: ChatTurn; turnId: string }) {
   return (
-    <article className="conversation-turn">
+    <article className="conversation-turn" id={turnId}>
       <div className="user-message"><span>YOU</span><p>{turn.question}</p></div>
       {(turn.running || turn.progress.length > 0) && <ProgressSteps nodes={turn.progress} running={turn.running} />}
       {turn.error && <div className="error-banner"><strong>分析未完成</strong><span>{turn.error}</span></div>}
@@ -295,6 +383,12 @@ function createConversation(): Conversation {
 function createTitle(question: string): string {
   const compact = question.replaceAll(/\s+/g, " ").trim();
   return compact.length > 24 ? `${compact.slice(0, 24)}…` : compact;
+}
+
+function findMostRecentConversation(conversations: Conversation[]): Conversation {
+  return conversations.reduce((latest, conversation) => (
+    conversation.updatedAt > latest.updatedAt ? conversation : latest
+  ));
 }
 
 function restoreConversations(): Conversation[] {
