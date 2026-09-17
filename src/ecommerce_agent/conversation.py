@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from threading import Lock
-from typing import Iterable
+from typing import Any, Iterable
 
 
 @dataclass(frozen=True)
@@ -10,19 +10,49 @@ class ConversationTurn:
     question: str
     answer: str = ""
     intent: str = ""
+    query_spec: dict[str, Any] = field(default_factory=dict)
 
 
-def resolve_follow_up(question: str, history: Iterable[ConversationTurn | dict[str, str]] | None) -> str:
+def resolve_follow_up(question: str, history: Iterable[ConversationTurn | dict[str, Any]] | None) -> str:
     turns = list(history or [])
-    if not turns:
-        return question
-    normalized = question.strip().lower()
-    follow_up_markers = ("这个", "刚才", "上一", "继续", "它", "该", "呢", "那个", "同比", "环比")
-    if not any(marker in normalized for marker in follow_up_markers):
+    if not turns or not is_follow_up_question(question, turns):
         return question
     previous = turns[-1]
     previous_question = previous.question if isinstance(previous, ConversationTurn) else previous.get("question", "")
-    return f"基于上一轮问题「{previous_question}」，当前追问：「{question}」"
+    return f"这是同一会话中的追问。上一轮问题：「{previous_question}」。当前追问：「{question}」。未重新指定的指标、时间和筛选条件沿用上一轮。"
+
+
+def inherited_query_spec(
+    question: str,
+    history: Iterable[ConversationTurn | dict[str, Any]] | None,
+) -> dict[str, Any]:
+    turns = list(history or [])
+    if not turns or not is_follow_up_question(question, turns):
+        return {}
+    previous = turns[-1]
+    value = previous.query_spec if isinstance(previous, ConversationTurn) else previous.get("query_spec", {})
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def is_follow_up_question(
+    question: str,
+    history: Iterable[ConversationTurn | dict[str, Any]] | None,
+) -> bool:
+    if not list(history or []):
+        return False
+    text = question.strip().lower().replace(" ", "")
+    direct_markers = ("这个", "这些", "刚才", "上一", "继续", "它", "该", "呢", "那个", "其中", "再看", "进一步")
+    if any(marker in text for marker in direct_markers):
+        return True
+    discourse_markers = ("贡献来源", "主要贡献", "增长贡献", "拉动", "驱动", "原因", "拆解", "细分")
+    if any(marker in text for marker in discourse_markers):
+        return True
+    explicit_metrics = ("销售额", "gmv", "成交额", "金额", "订单量", "订单数", "销量", "件数", "客单价", "复购率", "复购", "转化率", "利润", "毛利")
+    if any(metric in text for metric in explicit_metrics):
+        return False
+    dimensions = ("商品", "货品", "sku", "类目", "品类", "渠道", "地区", "区域", "会员等级")
+    ranking_or_breakdown = ("top", "最高", "最低", "排名", "排行", "哪些", "什么", "哪个", "分别", "按")
+    return any(dimension in text for dimension in dimensions) and any(marker in text for marker in ranking_or_breakdown)
 
 
 def is_ambiguous_metric_question(question: str) -> bool:

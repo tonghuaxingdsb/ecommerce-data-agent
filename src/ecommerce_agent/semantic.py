@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import re
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Iterable
 
-from ecommerce_agent.time_intelligence import parse_time_intent
+from ecommerce_agent.time_intelligence import build_period_predicates, parse_time_intent
 
 
 SUPPORTED_METRICS = {
@@ -114,6 +114,8 @@ class QuerySpec:
     sort_direction: str = "desc"
     limit: int | None = None
     minimum_sample_size: int | None = None
+    analysis_type: str = "aggregate"
+    comparison: str | None = None
     needs_clarification: bool = False
     clarifying_question: str = ""
 
@@ -140,7 +142,11 @@ class SemanticValidation:
         return "；".join(self.errors)
 
 
-def build_query_spec(question: str, payload: dict[str, Any] | None = None) -> QuerySpec:
+def build_query_spec(
+    question: str,
+    payload: dict[str, Any] | None = None,
+    inherited: dict[str, Any] | None = None,
+) -> QuerySpec:
     """Ground an LLM plan against explicit metric/dimension words in the question.
 
     The model is free to infer omitted slots, while explicit user constraints always
@@ -149,28 +155,49 @@ def build_query_spec(question: str, payload: dict[str, Any] | None = None) -> Qu
     """
 
     payload = payload or {}
+    inherited = inherited or {}
     supplied_metrics = _normalize_many(payload.get("metrics"), _METRIC_ALIASES)
     supplied_dimensions = _normalize_many(payload.get("dimensions"), _DIMENSION_ALIASES)
+    inherited_metrics = _normalize_many(inherited.get("metrics"), _METRIC_ALIASES)
+    inherited_dimensions = _normalize_many(inherited.get("dimensions"), _DIMENSION_ALIASES)
     explicit_metrics, unsupported_metric = _detect_metrics(question)
     explicit_dimensions = _detect_dimensions(question)
 
-    metrics = explicit_metrics or supplied_metrics
-    dimensions = explicit_dimensions or supplied_dimensions
+    metrics = explicit_metrics or supplied_metrics or inherited_metrics
+    dimensions = explicit_dimensions or supplied_dimensions or inherited_dimensions
     if not metrics and not unsupported_metric and _can_default_to_gmv(question, dimensions):
         metrics = ("gmv",)
 
-    filters = _payload_filters(payload.get("filters"))
+    filters = _merge_filters(_payload_filters(inherited.get("filters")), _payload_filters(payload.get("filters")))
     area_filter = extract_area_filter(question)
-    if area_filter and not any(item.field == "area" for item in filters):
-        filters = (*filters, QueryFilter(field="area", operator="=", value=area_filter))
+    if area_filter:
+        filters = _merge_filters(filters, (QueryFilter(field="area", operator="=", value=area_filter),))
     if not any(item.field == "status" for item in filters):
         filters = (*filters, QueryFilter(field="status", operator="=", value="paid"))
 
-    time_range = _explicit_time_range(question) or _optional_string(payload.get("time_range"))
+    time_range = (
+        _explicit_time_range(question)
+        or _optional_string(payload.get("time_range"))
+        or _optional_string(inherited.get("time_range"))
+    )
     if "order_date" in dimensions and not time_range:
         time_range = "近 30 天"
 
-    sort_by = _normalize_metric(payload.get("sort_by"))
+    analysis_type = (
+        _detect_analysis_type(question)
+        or _normalize_analysis_type(payload.get("analysis_type"))
+        or _normalize_analysis_type(inherited.get("analysis_type"))
+        or "aggregate"
+    )
+    comparison = (
+        _detect_comparison(question)
+        or _normalize_comparison(payload.get("comparison"))
+        or _normalize_comparison(inherited.get("comparison"))
+    )
+    if analysis_type == "contribution" and not comparison:
+        comparison = "mom"
+
+    sort_by = _normalize_metric(payload.get("sort_by")) or _normalize_metric(inherited.get("sort_by"))
     if metrics and (_is_ranking_question(question) or dimensions):
         sort_by = metrics[0]
     direction = "asc" if any(token in question.lower() for token in ("最低", "最少", "倒数")) else "desc"
@@ -182,6 +209,8 @@ def build_query_spec(question: str, payload: dict[str, Any] | None = None) -> Qu
         candidate_limit = payload.get("limit")
         if isinstance(candidate_limit, int):
             limit = max(1, min(candidate_limit, 200))
+        elif isinstance(inherited.get("limit"), int) and not explicit_dimensions:
+            limit = max(1, min(int(inherited["limit"]), 200))
         elif dimensions and _is_ranking_question(question):
             limit = 10
 
@@ -206,6 +235,8 @@ def build_query_spec(question: str, payload: dict[str, Any] | None = None) -> Qu
         sort_direction=direction,
         limit=limit,
         minimum_sample_size=minimum_sample_size,
+        analysis_type=analysis_type,
+        comparison=comparison,
         needs_clarification=bool(clarification),
         clarifying_question=clarification,
     )
@@ -216,6 +247,8 @@ def compile_query_spec(spec: QuerySpec, question: str) -> CompiledQuery:
         return CompiledQuery(sql="", summary=spec.clarifying_question)
     if not spec.metrics:
         return CompiledQuery(sql="", summary="没有解析到可执行指标。")
+    if spec.analysis_type == "contribution" and spec.comparison and "gmv" in spec.metrics and spec.dimensions:
+        return _compile_gmv_contribution_query(spec, question)
     if "repurchase_rate" in spec.metrics:
         return _compile_repurchase_query(spec, question)
     return _compile_additive_query(spec, question)
@@ -257,7 +290,7 @@ def validate_sql_semantics(spec: QuerySpec, sql: str) -> SemanticValidation:
             errors.append(f"查询遗漏地区筛选：{item.value}")
 
     if spec.sort_by and spec.dimensions:
-        result_column = METRIC_RESULT_COLUMNS.get(spec.sort_by, spec.sort_by)
+        result_column = "gmv_change" if spec.analysis_type == "contribution" else METRIC_RESULT_COLUMNS.get(spec.sort_by, spec.sort_by)
         order_pattern = rf"order\s+by\s+(?:\w+\.)?{re.escape(result_column)}\s+{spec.sort_direction}"
         if not re.search(order_pattern, normalized):
             errors.append(f"排名必须按 {result_column} {spec.sort_direction.upper()} 排序")
@@ -298,6 +331,49 @@ WHERE {' AND '.join(where_parts)}{group_by}{order_by}{limit}
         chart_type=chart_type,
         chart_x=chart_x,
         chart_y=chart_y,
+    )
+
+
+def _compile_gmv_contribution_query(spec: QuerySpec, question: str) -> CompiledQuery:
+    dimensions = _dimension_fragments(spec.dimensions)
+    time_intent = parse_time_intent(spec.time_range or question)
+    time_intent = replace(time_intent, comparison=spec.comparison)
+    current_predicate, comparison_predicate = build_period_predicates(time_intent)
+    joins = _merge_joins(dimensions.joins, _filter_joins(spec.filters))
+    where_parts = ["o.status = 'paid'", *_filter_fragments(spec.filters)]
+    group_by = ", ".join(dimensions.groups)
+    dimension_columns = ", ".join(DIMENSION_RESULT_COLUMNS[item] for item in spec.dimensions)
+    limit = f"\nLIMIT {spec.limit}" if spec.limit else ""
+    sql = f"""
+WITH bounds AS (SELECT max(order_date) AS end_date FROM fact_orders),
+contribution_base AS (
+  SELECT {', '.join(dimensions.selects)},
+         COALESCE(SUM(o.amount) FILTER (WHERE {current_predicate}), 0) AS current_gmv,
+         COALESCE(SUM(o.amount) FILTER (WHERE {comparison_predicate}), 0) AS previous_gmv
+  FROM fact_orders o
+  CROSS JOIN bounds
+  {joins}
+  WHERE {' AND '.join(where_parts)}
+  GROUP BY {group_by}
+), contribution_result AS (
+  SELECT {dimension_columns}, current_gmv, previous_gmv,
+         ROUND(current_gmv - previous_gmv, 2) AS gmv_change,
+         ROUND((current_gmv - previous_gmv) / NULLIF(previous_gmv, 0) * 100, 2) AS change_pct
+  FROM contribution_base
+)
+SELECT *,
+       ROUND(gmv_change / NULLIF(SUM(gmv_change) OVER (), 0) * 100, 2) AS contribution_pct
+FROM contribution_result
+ORDER BY gmv_change {spec.sort_direction.upper()}{limit}
+""".strip()
+    dimension_label = "、".join(SUPPORTED_DIMENSIONS[item] for item in spec.dimensions)
+    comparison_label = "同比" if spec.comparison == "yoy" else "环比"
+    return CompiledQuery(
+        sql=sql,
+        summary=f"按{dimension_label}拆解{spec.time_range or time_intent.label} paid GMV 的{comparison_label}增量贡献。",
+        chart_type="bar",
+        chart_x=DIMENSION_RESULT_COLUMNS.get(spec.dimensions[0]),
+        chart_y="gmv_change",
     )
 
 
@@ -501,8 +577,18 @@ def _payload_filters(value: Any) -> tuple[QueryFilter, ...]:
     return tuple(filters)
 
 
+def _merge_filters(*groups: tuple[QueryFilter, ...]) -> tuple[QueryFilter, ...]:
+    merged: dict[str, QueryFilter] = {}
+    for group in groups:
+        for item in group:
+            merged[item.field] = item
+    return tuple(merged.values())
+
+
 def _normalize_many(value: Any, aliases: dict[str, str]) -> tuple[str, ...]:
-    if not isinstance(value, list):
+    # QuerySpec.to_dict() preserves tuples, while JSON model payloads use lists.
+    # Accept both so a spec can round-trip through the in-memory conversation store.
+    if not isinstance(value, (list, tuple)):
         return ()
     normalized = []
     for item in value:
@@ -516,6 +602,32 @@ def _normalize_metric(value: Any) -> str | None:
     if value is None:
         return None
     return _METRIC_ALIASES.get(str(value).strip().lower())
+
+
+def _detect_analysis_type(question: str) -> str | None:
+    text = question.lower().replace(" ", "")
+    if any(token in text for token in ("贡献来源", "主要贡献", "增长贡献", "拉动", "驱动")):
+        return "contribution"
+    return None
+
+
+def _normalize_analysis_type(value: Any) -> str | None:
+    normalized = str(value or "").strip().lower()
+    return normalized if normalized in {"aggregate", "contribution"} else None
+
+
+def _detect_comparison(question: str) -> str | None:
+    text = question.lower().replace(" ", "")
+    if "同比" in text or "去年同期" in text:
+        return "yoy"
+    if any(token in text for token in ("环比", "前一周期", "上一周期", "上期")):
+        return "mom"
+    return None
+
+
+def _normalize_comparison(value: Any) -> str | None:
+    normalized = str(value or "").strip().lower()
+    return normalized if normalized in {"mom", "yoy"} else None
 
 
 def _can_default_to_gmv(question: str, dimensions: tuple[str, ...]) -> bool:

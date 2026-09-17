@@ -86,7 +86,12 @@ def create_app() -> FastAPI:
         if request.conversation_id:
             conversations.append(
                 request.conversation_id,
-                ConversationTurn(question=request.question, answer=result["answer"], intent=result["intent"]),
+                ConversationTurn(
+                    question=request.question,
+                    answer=result["answer"],
+                    intent=result["intent"],
+                    query_spec=result.get("query_spec", {}),
+                ),
             )
         audit_logger.log_query(
             request_id=uuid4().hex,
@@ -138,7 +143,12 @@ def create_app() -> FastAPI:
                     result = event["result"]
                     conversations.append(
                         request.conversation_id,
-                        ConversationTurn(question=request.question, answer=result.get("answer", ""), intent=result.get("intent", "")),
+                        ConversationTurn(
+                            question=request.question,
+                            answer=result.get("answer", ""),
+                            intent=result.get("intent", ""),
+                            query_spec=result.get("query_spec", {}),
+                        ),
                     )
                 if event.get("event") == "result":
                     result = event["result"]

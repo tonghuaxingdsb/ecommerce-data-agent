@@ -94,6 +94,7 @@ def test_agent_graph_runs_from_question_to_answer():
     assert "中文分析" in result["answer"]
     assert "SELECT" not in result["answer"]
     assert result["trace"] == [
+        "conversation_context:history=0,inherited=False",
         "classify_intent:sales_overview",
         "detect_language:zh",
         "prepare_context:default_schema_and_metrics",

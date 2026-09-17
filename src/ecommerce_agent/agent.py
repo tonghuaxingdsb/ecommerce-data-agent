@@ -6,7 +6,7 @@ from langgraph.graph import END, START, StateGraph
 
 from ecommerce_agent.answering import build_fallback_analysis
 from ecommerce_agent.charting import build_chart_spec
-from ecommerce_agent.conversation import ConversationTurn, resolve_follow_up
+from ecommerce_agent.conversation import ConversationTurn, inherited_query_spec, resolve_follow_up
 from ecommerce_agent.language import detect_response_language
 from ecommerce_agent.llm import CompletionGateway, LLMResult, build_gateway
 from ecommerce_agent.rag import retrieve_rag_context
@@ -19,7 +19,7 @@ from ecommerce_agent.text_to_sql import parse_sql_plan
 class AgentState(TypedDict, total=False):
     question: str
     effective_question: str
-    history: list[ConversationTurn | dict[str, str]]
+    history: list[ConversationTurn | dict[str, Any]]
     conversation_id: str
     schema_context: str
     metric_context: str
@@ -28,6 +28,7 @@ class AgentState(TypedDict, total=False):
     llm_configured: bool
     plan: dict[str, Any]
     query_spec: dict[str, Any]
+    inherited_query_spec: dict[str, Any]
     response_language: str
     candidate_sql: str
     executed_sql: str
@@ -57,16 +58,23 @@ def build_agent_graph(llm: CompletionGateway | None = None, sql_runner: SQLRunne
     def classify_intent(state: AgentState) -> AgentState:
         question = state["question"]
         effective_question = resolve_follow_up(question, state.get("history"))
+        inherited_spec = inherited_query_spec(question, state.get("history"))
         intent = infer_intent(effective_question)
         response_language = detect_response_language(question)
         return {
             **state,
             "effective_question": effective_question,
+            "inherited_query_spec": inherited_spec,
             "intent": intent,
             "response_language": response_language,
             "retry_count": state.get("retry_count", 0),
             "max_retries": state.get("max_retries", max_retries),
-            "trace": [*state.get("trace", []), f"classify_intent:{intent}", f"detect_language:{response_language}"],
+            "trace": [
+                *state.get("trace", []),
+                f"conversation_context:history={len(state.get('history') or [])},inherited={bool(inherited_spec)}",
+                f"classify_intent:{intent}",
+                f"detect_language:{response_language}",
+            ],
         }
 
     def prepare_context(state: AgentState) -> AgentState:
@@ -92,7 +100,12 @@ def build_agent_graph(llm: CompletionGateway | None = None, sql_runner: SQLRunne
             previous_sql=state.get("candidate_sql") if state.get("retry_count", 0) > 0 else None,
             sql_error=state.get("sql_error") if state.get("retry_count", 0) > 0 else None,
         )
-        plan = parse_sql_plan(result.text, default_intent=state["intent"], question=state.get("effective_question", state["question"]))
+        plan = parse_sql_plan(
+            result.text,
+            default_intent=state["intent"],
+            question=state["question"],
+            inherited_query_spec=state.get("inherited_query_spec"),
+        )
         return {
             **state,
             "intent": plan.intent,
@@ -115,8 +128,9 @@ def build_agent_graph(llm: CompletionGateway | None = None, sql_runner: SQLRunne
                 "trace": [*state.get("trace", []), "validate_semantics:skipped"],
             }
         spec = build_query_spec(
-            state.get("effective_question", state["question"]),
+            state["question"],
             state.get("query_spec", {}),
+            inherited=state.get("inherited_query_spec"),
         )
         validation = validate_sql_semantics(spec, state["candidate_sql"])
         semantic_error = validation.message if not validation.ok else ""

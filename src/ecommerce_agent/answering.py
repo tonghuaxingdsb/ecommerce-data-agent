@@ -18,6 +18,19 @@ def build_chinese_analysis(question: str, intent: str, rows: list[dict[str, Any]
 
     first = rows[0]
     spec = build_query_spec(question)
+    if "gmv_change" in first:
+        dimension = next((item for item in spec.dimensions if DIMENSION_RESULT_COLUMNS.get(item) in first), None)
+        dimension_column = DIMENSION_RESULT_COLUMNS.get(dimension or "")
+        if dimension and dimension_column:
+            change = number_or_zero(first.get("gmv_change"))
+            effect = "拉动" if change >= 0 else "拖累"
+            top_names = "、".join(str(row.get(dimension_column)) for row in rows[:3])
+            return (
+                f"{SUPPORTED_DIMENSIONS[dimension]}「{first.get(dimension_column)}」是当前排名第一的 GMV {effect}来源，"
+                f"本期销售额 {format_money(first.get('current_gmv'))}，比较期 {format_money(first.get('previous_gmv'))}，"
+                f"增量 {format_money(change)}，占整体净增量约 {number_or_zero(first.get('contribution_pct')):.2f}%。"
+                f"增量 Top3 为 {top_names}；建议同时关注负贡献项，区分增长来源与下滑拖累。"
+            )
     if "order_date" in first and spec.metrics:
         metric = spec.metrics[0]
         metric_column = METRIC_RESULT_COLUMNS[metric]

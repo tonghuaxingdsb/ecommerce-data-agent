@@ -69,26 +69,32 @@ class SQLPlan:
         return asdict(self)
 
 
-def parse_sql_plan(text: str, default_intent: str, question: str) -> SQLPlan:
+def parse_sql_plan(
+    text: str,
+    default_intent: str,
+    question: str,
+    inherited_query_spec: dict[str, Any] | None = None,
+) -> SQLPlan:
     try:
         payload = json.loads(extract_json(text))
     except json.JSONDecodeError:
-        return fallback_sql_plan(question, default_intent)
+        return fallback_sql_plan(question, default_intent, inherited_query_spec=inherited_query_spec)
 
     raw_spec = payload.get("query_spec") if isinstance(payload.get("query_spec"), dict) else {}
-    spec = build_query_spec(question, raw_spec)
+    spec = build_query_spec(question, raw_spec, inherited=inherited_query_spec)
     candidate_sql = str(payload.get("candidate_sql") or "")
-    compiled = compile_query_spec(spec, question) if not candidate_sql else None
+    force_compiled = spec.analysis_type == "contribution"
+    compiled = compile_query_spec(spec, question) if not candidate_sql or force_compiled else None
     return SQLPlan(
         intent=_intent_from_spec(spec, str(payload.get("intent") or default_intent)),
-        needs_clarification=spec.needs_clarification or bool(payload.get("needs_clarification", False)),
-        clarifying_question=spec.clarifying_question or str(payload.get("clarifying_question") or ""),
+        needs_clarification=spec.needs_clarification,
+        clarifying_question=spec.clarifying_question if spec.needs_clarification else "",
         analysis_plan=list(payload.get("analysis_plan") or []),
-        candidate_sql=candidate_sql or (compiled.sql if compiled else ""),
-        summary=str(payload.get("summary") or (compiled.summary if compiled else "")),
-        chart_type=str(payload.get("chart_type") or (compiled.chart_type if compiled else "table")),
-        chart_x=payload.get("chart_x") or (compiled.chart_x if compiled else None),
-        chart_y=payload.get("chart_y") or (compiled.chart_y if compiled else None),
+        candidate_sql=(compiled.sql if compiled and force_compiled else candidate_sql) or (compiled.sql if compiled else ""),
+        summary=compiled.summary if compiled and force_compiled else str(payload.get("summary") or (compiled.summary if compiled else "")),
+        chart_type=compiled.chart_type if compiled and force_compiled else str(payload.get("chart_type") or (compiled.chart_type if compiled else "table")),
+        chart_x=compiled.chart_x if compiled and force_compiled else payload.get("chart_x") or (compiled.chart_x if compiled else None),
+        chart_y=compiled.chart_y if compiled and force_compiled else payload.get("chart_y") or (compiled.chart_y if compiled else None),
         query_spec=spec.to_dict(),
     )
 
@@ -99,7 +105,11 @@ def extract_json(text: str) -> str:
     return fenced.group(1) if fenced else stripped
 
 
-def fallback_sql_plan(question: str, intent: str) -> SQLPlan:
+def fallback_sql_plan(
+    question: str,
+    intent: str,
+    inherited_query_spec: dict[str, Any] | None = None,
+) -> SQLPlan:
     if is_ambiguous_metric_question(question):
         return SQLPlan(
             intent=intent,
@@ -131,7 +141,7 @@ LIMIT 20
             query_spec=spec.to_dict(),
         )
 
-    spec = build_query_spec(question)
+    spec = build_query_spec(question, inherited=inherited_query_spec)
     if spec.needs_clarification:
         return SQLPlan(
             intent=_intent_from_spec(spec, intent),

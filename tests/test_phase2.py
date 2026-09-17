@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from ecommerce_agent.charting import build_chart_spec
-from ecommerce_agent.conversation import ConversationTurn, is_ambiguous_metric_question, resolve_follow_up
+from ecommerce_agent.conversation import ConversationTurn, inherited_query_spec, is_ambiguous_metric_question, resolve_follow_up
 from ecommerce_agent.agent import infer_intent
 from ecommerce_agent.rag import DictionaryRetriever, retrieve_rag_context
 from ecommerce_agent.text_to_sql import fallback_sql_plan
@@ -64,6 +64,22 @@ def test_ambiguous_metric_question_returns_clarification_plan():
 def test_follow_up_uses_previous_turn_context():
     result = resolve_follow_up("那环比呢？", [ConversationTurn(question="近 30 天销售额多少？")])
     assert "近 30 天销售额多少" in result
+
+
+def test_contribution_follow_up_inherits_structured_query_spec():
+    previous_spec = {
+        "metrics": ["gmv"],
+        "dimensions": [],
+        "filters": [{"field": "status", "operator": "=", "value": "paid"}],
+        "time_range": "近 30 天",
+        "comparison": "mom",
+    }
+    history = [ConversationTurn(question="近 30 天销售额多少？环比上个月呢？", query_spec=previous_spec)]
+
+    effective = resolve_follow_up("主要贡献来源是什么商品", history)
+
+    assert "上一轮问题" in effective
+    assert inherited_query_spec("主要贡献来源是什么商品", history) == previous_spec
 
 
 def test_chart_spec_infers_line_chart_for_date_results():
