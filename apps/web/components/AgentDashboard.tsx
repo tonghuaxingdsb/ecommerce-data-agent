@@ -10,6 +10,7 @@ const NODE_LABELS: Record<string, string> = {
   classify_intent: "识别意图",
   prepare_context: "检索口径",
   generate_sql: "生成查询",
+  validate_semantics: "校验语义",
   execute_sql: "执行 SQL",
   prepare_retry: "纠错重试",
   summarize_result: "生成洞察",
@@ -142,7 +143,7 @@ function ResultTable({ result }: { result: AgentResult }) {
 }
 
 function DebugPanel({ result }: { result: AgentResult }) {
-  return <details className="debug-panel"><summary><span>开发调试信息</span><small>SQL · Trace · RAG</small></summary><div className="debug-content"><div><label>Generated SQL</label><pre>{result.sql || "未生成 SQL"}</pre></div><div className="debug-columns"><div><label>Execution trace</label><ul>{result.trace.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}</ul></div><div><label>RAG sources</label><ul>{result.retrieval_sources.map((item) => <li key={item}>{item}</li>)}</ul></div></div></div></details>;
+  return <details className="debug-panel"><summary><span>开发调试信息</span><small>Plan · SQL · Trace · RAG</small></summary><div className="debug-content"><div><label>Query spec</label><pre>{JSON.stringify(result.query_spec, null, 2)}</pre></div><div><label>Generated SQL</label><pre>{result.sql || "未生成 SQL"}</pre></div><div className="debug-columns"><div><label>Execution trace</label><ul>{result.trace.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}</ul></div><div><label>RAG sources</label><ul>{result.retrieval_sources.map((item) => <li key={item}>{item}</li>)}</ul></div></div></div></details>;
 }
 
 function formatLabel(value: string) { return value.replaceAll("_", " "); }

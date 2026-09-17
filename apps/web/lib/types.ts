@@ -18,6 +18,8 @@ export interface AgentResult {
   row_count: number;
   elapsed_ms: number;
   sql_error: string;
+  semantic_error: string;
+  query_spec: Record<string, unknown>;
   chart: ChartSpec;
   trace: string[];
   retrieval_sources: string[];

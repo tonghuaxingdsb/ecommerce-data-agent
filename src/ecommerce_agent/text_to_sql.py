@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from ecommerce_agent.conversation import is_ambiguous_metric_question
+from ecommerce_agent.semantic import QuerySpec, build_query_spec, compile_query_spec, extract_area_filter
 from ecommerce_agent.time_intelligence import build_sales_overview_sql
 
 
@@ -62,6 +63,7 @@ class SQLPlan:
     chart_type: str = "table"
     chart_x: str | None = None
     chart_y: str | None = None
+    query_spec: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -73,16 +75,21 @@ def parse_sql_plan(text: str, default_intent: str, question: str) -> SQLPlan:
     except json.JSONDecodeError:
         return fallback_sql_plan(question, default_intent)
 
+    raw_spec = payload.get("query_spec") if isinstance(payload.get("query_spec"), dict) else {}
+    spec = build_query_spec(question, raw_spec)
+    candidate_sql = str(payload.get("candidate_sql") or "")
+    compiled = compile_query_spec(spec, question) if not candidate_sql else None
     return SQLPlan(
-        intent=str(payload.get("intent") or default_intent),
-        needs_clarification=bool(payload.get("needs_clarification", False)),
-        clarifying_question=str(payload.get("clarifying_question") or ""),
+        intent=_intent_from_spec(spec, str(payload.get("intent") or default_intent)),
+        needs_clarification=spec.needs_clarification or bool(payload.get("needs_clarification", False)),
+        clarifying_question=spec.clarifying_question or str(payload.get("clarifying_question") or ""),
         analysis_plan=list(payload.get("analysis_plan") or []),
-        candidate_sql=str(payload.get("candidate_sql") or ""),
-        summary=str(payload.get("summary") or ""),
-        chart_type=str(payload.get("chart_type") or "table"),
-        chart_x=payload.get("chart_x"),
-        chart_y=payload.get("chart_y"),
+        candidate_sql=candidate_sql or (compiled.sql if compiled else ""),
+        summary=str(payload.get("summary") or (compiled.summary if compiled else "")),
+        chart_type=str(payload.get("chart_type") or (compiled.chart_type if compiled else "table")),
+        chart_x=payload.get("chart_x") or (compiled.chart_x if compiled else None),
+        chart_y=payload.get("chart_y") or (compiled.chart_y if compiled else None),
+        query_spec=spec.to_dict(),
     )
 
 
@@ -93,9 +100,6 @@ def extract_json(text: str) -> str:
 
 
 def fallback_sql_plan(question: str, intent: str) -> SQLPlan:
-    normalized = question.lower()
-    area_filter = extract_area_filter(question)
-
     if is_ambiguous_metric_question(question):
         return SQLPlan(
             intent=intent,
@@ -105,9 +109,8 @@ def fallback_sql_plan(question: str, intent: str) -> SQLPlan:
             summary="用户尚未指定要比较的业务指标。",
         )
 
-    if intent == "product_analysis":
-        if "滞销" in question:
-            sql = """
+    if "滞销" in question:
+        sql = """
 SELECT p.product_name, p.category, p.stock, COALESCE(SUM(o.quantity), 0) AS units_sold, COALESCE(SUM(o.amount), 0) AS gmv
 FROM dim_product p
 LEFT JOIN fact_orders o ON o.product_id = p.product_id AND o.status = 'paid' AND o.order_date >= (SELECT max(order_date) - INTERVAL '29 days' FROM fact_orders)
@@ -116,89 +119,67 @@ HAVING COALESCE(SUM(o.quantity), 0) < 20 AND p.stock > 500
 ORDER BY units_sold ASC, p.stock DESC
 LIMIT 20
 """.strip()
-            summary = "按近 30 天 paid 销量和当前库存识别疑似滞销商品。"
-        else:
-            sql = """
-SELECT p.product_name, p.category, SUM(o.amount) AS gmv, SUM(o.quantity) AS units, COUNT(DISTINCT o.order_id) AS orders
-FROM fact_orders o
-JOIN dim_product p ON p.product_id = o.product_id
-WHERE o.status = 'paid'
-GROUP BY p.product_name, p.category
-ORDER BY gmv DESC
-LIMIT 10
-""".strip()
-            summary = "按 paid GMV 输出 Top10 商品。"
-        return SQLPlan(intent=intent, analysis_plan=default_steps(), candidate_sql=sql, summary=summary, chart_type="bar", chart_x="product_name", chart_y="gmv")
+        spec = build_query_spec("近 30 天销量最低的商品")
+        return SQLPlan(
+            intent="product_analysis",
+            analysis_plan=default_steps(),
+            candidate_sql=sql,
+            summary="按近 30 天 paid 销量和当前库存识别疑似滞销商品。",
+            chart_type="bar",
+            chart_x="product_name",
+            chart_y="units_sold",
+            query_spec=spec.to_dict(),
+        )
 
-    if intent == "user_analysis" or "复购" in question:
-        region_join = "JOIN dim_region r ON r.region_id = o.region_id" if area_filter else ""
-        region_where = f"AND r.area = '{area_filter}'" if area_filter else ""
-        sql = f"""
-WITH user_orders AS (
-  SELECT o.user_id, COUNT(DISTINCT o.order_id) AS paid_orders, SUM(o.amount) AS gmv
-  FROM fact_orders o
-  {region_join}
-  WHERE o.status = 'paid'
-    {region_where}
-  GROUP BY o.user_id
-)
-SELECT
-  COUNT(*) AS paid_users,
-  COUNT(*) FILTER (WHERE paid_orders >= 2) AS repeat_users,
-  ROUND(COUNT(*) FILTER (WHERE paid_orders >= 2)::numeric / NULLIF(COUNT(*), 0) * 100, 2) AS repurchase_rate_pct,
-  ROUND(AVG(gmv), 2) AS avg_user_gmv
-FROM user_orders
-""".strip()
-        return SQLPlan(intent="user_analysis", analysis_plan=default_steps(), candidate_sql=sql, summary="按用户 paid 订单数计算周期内复购率。", chart_type="table")
+    spec = build_query_spec(question)
+    if spec.needs_clarification:
+        return SQLPlan(
+            intent=_intent_from_spec(spec, intent),
+            needs_clarification=True,
+            clarifying_question=spec.clarifying_question,
+            analysis_plan=["识别指标、维度和可用数据", "澄清缺失或不支持的口径"],
+            summary=spec.clarifying_question,
+            query_spec=spec.to_dict(),
+        )
 
-    if intent == "channel_analysis":
-        sql = """
-SELECT channel, SUM(amount) AS gmv, COUNT(DISTINCT order_id) AS orders, SUM(quantity) AS units,
-       ROUND(SUM(amount) / NULLIF(COUNT(DISTINCT order_id), 0), 2) AS avg_order_value
-FROM fact_orders
-WHERE status = 'paid'
-GROUP BY channel
-ORDER BY gmv DESC
-""".strip()
-        return SQLPlan(intent=intent, analysis_plan=default_steps(), candidate_sql=sql, summary="按渠道聚合 paid GMV、订单量和客单价。", chart_type="bar", chart_x="channel", chart_y="gmv")
+    normalized = question.lower()
+    if not spec.dimensions and spec.metrics == ("gmv",) and any(token in normalized for token in ("同比", "环比", "对比", "相比", "增长", "变化")):
+        area_filter = extract_area_filter(question)
+        sql, time_intent = build_sales_overview_sql(question, area_filter=area_filter)
+        comparison_label = "去年同期" if time_intent.comparison == "yoy" else "前一周期"
+        return SQLPlan(
+            intent="sales_overview",
+            analysis_plan=default_steps(),
+            candidate_sql=sql,
+            summary=f"对比{time_intent.label}与{comparison_label}的 paid GMV、订单量、销量和客单价。",
+            chart_type="table",
+            query_spec=spec.to_dict(),
+        )
 
-    if "类目" in question:
-        sql = """
-SELECT p.category, SUM(o.amount) AS gmv, SUM(o.quantity) AS units, COUNT(DISTINCT o.order_id) AS orders
-FROM fact_orders o
-JOIN dim_product p ON p.product_id = o.product_id
-WHERE o.status = 'paid'
-GROUP BY p.category
-ORDER BY gmv DESC
-""".strip()
-        return SQLPlan(intent="product_analysis", analysis_plan=default_steps(), candidate_sql=sql, summary="按类目聚合 paid GMV、销量和订单量。", chart_type="bar", chart_x="category", chart_y="gmv")
-
-    region_join = "JOIN dim_region r ON r.region_id = o.region_id" if area_filter else ""
-    region_where = f"AND r.area = '{area_filter}'" if area_filter else ""
-    if any(keyword in normalized for keyword in ["趋势", "每天", "每日"]):
-        sql = f"""
-SELECT o.order_date, SUM(o.amount) AS gmv, COUNT(DISTINCT o.order_id) AS orders, SUM(o.quantity) AS units
-FROM fact_orders o
-{region_join}
-WHERE o.status = 'paid'
-  AND o.order_date >= (SELECT max(order_date) - INTERVAL '29 days' FROM fact_orders)
-  {region_where}
-GROUP BY o.order_date
-ORDER BY o.order_date
-""".strip()
-        return SQLPlan(intent="sales_overview", analysis_plan=default_steps(), candidate_sql=sql, summary="按天输出近 30 天 paid 销售趋势。", chart_type="line", chart_x="order_date", chart_y="gmv")
-
-    sql, time_intent = build_sales_overview_sql(question, area_filter=area_filter)
-    comparison_label = "去年同期" if time_intent.comparison == "yoy" else "前一周期"
-    return SQLPlan(intent="sales_overview", analysis_plan=default_steps(), candidate_sql=sql, summary=f"对比{time_intent.label}与{comparison_label}的 paid GMV、订单量、销量和客单价。", chart_type="table")
+    compiled = compile_query_spec(spec, question)
+    return SQLPlan(
+        intent=_intent_from_spec(spec, intent),
+        analysis_plan=default_steps(),
+        candidate_sql=compiled.sql,
+        summary=compiled.summary,
+        chart_type=compiled.chart_type,
+        chart_x=compiled.chart_x,
+        chart_y=compiled.chart_y,
+        query_spec=spec.to_dict(),
+    )
 
 
 def default_steps() -> list[str]:
     return ["识别业务意图和指标口径", "生成只读 SELECT SQL", "执行 SQL 并基于结果返回结论"]
 
 
-def extract_area_filter(question: str) -> str | None:
-    for area in ["华东", "华南", "华北", "西南", "华中", "西北", "东北"]:
-        if area in question:
-            return area
-    return None
+def _intent_from_spec(spec: QuerySpec, default: str) -> str:
+    if any(dimension in spec.dimensions for dimension in ("product", "category")):
+        return "product_analysis"
+    if "channel" in spec.dimensions:
+        return "channel_analysis"
+    if "repurchase_rate" in spec.metrics or "vip_level" in spec.dimensions:
+        return "user_analysis"
+    if "order_date" in spec.dimensions or any(metric in spec.metrics for metric in ("gmv", "orders", "units", "avg_order_value")):
+        return "sales_overview"
+    return default

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ecommerce_agent.semantic import DIMENSION_RESULT_COLUMNS, METRIC_RESULT_COLUMNS, SUPPORTED_DIMENSIONS, SUPPORTED_METRICS, build_query_spec
 from ecommerce_agent.time_intelligence import parse_time_intent
 
 
@@ -16,6 +17,35 @@ def build_chinese_analysis(question: str, intent: str, rows: list[dict[str, Any]
         return "这次查询没有返回数据。建议先放宽时间范围或确认筛选条件是否过窄。"
 
     first = rows[0]
+    spec = build_query_spec(question)
+    if "order_date" in first and any("gmv" in row for row in rows):
+        total_gmv = sum(number_or_zero(row.get("gmv")) for row in rows)
+        total_orders = sum(number_or_zero(row.get("orders")) for row in rows)
+        peak = max(rows, key=lambda row: number_or_zero(row.get("gmv")))
+        return (
+            f"{spec.time_range or '当前周期'}累计销售额为 {format_money(total_gmv)}，订单量 {format_int(total_orders)} 单。"
+            f"销售峰值出现在 {peak.get('order_date')}，当日销售额 {format_money(peak.get('gmv'))}。"
+            "建议结合活动日和渠道进一步解释峰值来源。"
+        )
+
+    if "repurchase_rate_pct" in first:
+        dimension = next((item for item in spec.dimensions if DIMENSION_RESULT_COLUMNS.get(item) in first), None)
+        if dimension:
+            column = DIMENSION_RESULT_COLUMNS[dimension]
+            top = first
+            return (
+                f"按当前口径，{SUPPORTED_DIMENSIONS[dimension]}「{top.get(column)}」的复购率最高，为 "
+                f"{number_or_zero(top.get('repurchase_rate_pct')):.2f}%。购买用户 {format_int(top.get('paid_users'))} 人，"
+                f"其中复购用户 {format_int(top.get('repeat_users'))} 人。"
+                f"该口径按{SUPPORTED_DIMENSIONS[dimension]}内同一用户至少产生 2 个不同 paid 订单计算，"
+                "排名时需要同时关注购买用户数，避免小样本放大。"
+            )
+        return (
+            f"当前口径下付费用户数为 {format_int(first.get('paid_users'))} 人，其中复购用户 "
+            f"{format_int(first.get('repeat_users'))} 人，复购率为 {number_or_zero(first.get('repurchase_rate_pct')):.2f}%。"
+            "建议继续按商品、会员等级、渠道或地区拆分。"
+        )
+
     if intent == "sales_overview":
         time_intent = parse_time_intent(question)
         current_gmv = format_money(first.get("current_gmv"))
@@ -32,6 +62,19 @@ def build_chinese_analysis(question: str, intent: str, rows: list[dict[str, Any]
             f"同期订单量为 {current_orders} 单，销量 {current_units} 件，客单价约 {aov}。"
             "整体看，本期销售表现较上一周期更强，可以继续拆到渠道或商品类目看主要贡献来源。"
         )
+
+    primary_metric = spec.metrics[0] if spec.metrics else None
+    primary_dimension = spec.dimensions[0] if spec.dimensions else None
+    if primary_metric and primary_dimension and (primary_metric != "gmv" or primary_dimension not in {"product", "category", "channel"}):
+        metric_column = METRIC_RESULT_COLUMNS.get(primary_metric)
+        dimension_column = DIMENSION_RESULT_COLUMNS.get(primary_dimension)
+        if metric_column in first and dimension_column in first:
+            direction = "最高" if spec.sort_direction == "desc" else "最低"
+            return (
+                f"按{SUPPORTED_METRICS[primary_metric]}看，{SUPPORTED_DIMENSIONS[primary_dimension]}"
+                f"「{first.get(dimension_column)}」排名{direction}，指标值为 {format_metric_value(primary_metric, first.get(metric_column))}。"
+                f"结果已按 {metric_column} {spec.sort_direction.upper()} 排序，可在明细表继续查看其他{SUPPORTED_DIMENSIONS[primary_dimension]}。"
+            )
 
     if intent == "product_analysis" and "product_name" in first:
         top = first
@@ -88,6 +131,14 @@ def format_money(value: Any) -> str:
 
 def format_int(value: Any) -> str:
     return f"{int(number_or_zero(value)):,}"
+
+
+def format_metric_value(metric: str, value: Any) -> str:
+    if metric in {"gmv", "avg_order_value"}:
+        return format_money(value)
+    if metric == "repurchase_rate":
+        return f"{number_or_zero(value):.2f}%"
+    return format_int(value)
 
 
 def number_or_zero(value: Any) -> float:

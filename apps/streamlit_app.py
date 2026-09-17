@@ -73,6 +73,8 @@ if run_clicked and question.strip():
     with st.expander("调试信息", expanded=False):
         st.caption("用于检查 Agent 流程，正式面向业务用户时可以隐藏。")
         st.code(result.get("executed_sql") or result.get("candidate_sql") or "", language="sql")
+        st.caption("结构化查询计划")
+        st.json(result.get("query_spec", {}))
         st.json(result.get("trace", []))
         st.caption("RAG 命中")
         st.write(result.get("retrieval_sources", []))

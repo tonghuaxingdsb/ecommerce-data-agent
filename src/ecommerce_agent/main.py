@@ -41,6 +41,8 @@ class AgentResponse(BaseModel):
     row_count: int
     elapsed_ms: int
     sql_error: str
+    semantic_error: str
+    query_spec: dict[str, Any]
     chart: dict[str, Any]
     trace: list[str]
     retrieval_sources: list[str]
@@ -109,6 +111,8 @@ def create_app() -> FastAPI:
             row_count=result.get("row_count", 0),
             elapsed_ms=result.get("elapsed_ms", 0),
             sql_error=result.get("sql_error", ""),
+            semantic_error=result.get("semantic_error", ""),
+            query_spec=result.get("query_spec", {}),
             chart=result.get("chart", {}),
             trace=result["trace"],
             retrieval_sources=result.get("retrieval_sources", []),

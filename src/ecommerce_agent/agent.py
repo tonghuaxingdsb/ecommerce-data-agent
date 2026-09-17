@@ -11,6 +11,7 @@ from ecommerce_agent.language import detect_response_language
 from ecommerce_agent.llm import CompletionGateway, LLMResult, build_gateway
 from ecommerce_agent.rag import retrieve_rag_context
 from ecommerce_agent.schema_context import DEFAULT_SCHEMA_CONTEXT, METRIC_CONTEXT
+from ecommerce_agent.semantic import build_query_spec, validate_sql_semantics
 from ecommerce_agent.sql_tool import SQLExecutionResult, execute_sql
 from ecommerce_agent.text_to_sql import parse_sql_plan
 
@@ -26,6 +27,7 @@ class AgentState(TypedDict, total=False):
     llm_response: str
     llm_configured: bool
     plan: dict[str, Any]
+    query_spec: dict[str, Any]
     response_language: str
     candidate_sql: str
     executed_sql: str
@@ -34,6 +36,7 @@ class AgentState(TypedDict, total=False):
     rows: list[dict[str, Any]]
     row_count: int
     sql_error: str
+    semantic_error: str
     elapsed_ms: int
     retry_count: int
     max_retries: int
@@ -92,11 +95,40 @@ def build_agent_graph(llm: CompletionGateway | None = None, sql_runner: SQLRunne
         plan = parse_sql_plan(result.text, default_intent=state["intent"], question=state.get("effective_question", state["question"]))
         return {
             **state,
+            "intent": plan.intent,
             "llm_response": result.text,
             "llm_configured": result.configured,
             "plan": plan.to_dict(),
+            "query_spec": plan.query_spec,
             "candidate_sql": plan.candidate_sql,
+            "semantic_error": "",
+            "sql_error": "",
             "trace": [*state.get("trace", []), "generate_sql:deepseek" if result.configured else "generate_sql:fallback"],
+        }
+
+    def validate_semantics(state: AgentState) -> AgentState:
+        plan = state.get("plan", {})
+        if plan.get("needs_clarification") or not state.get("candidate_sql"):
+            return {
+                **state,
+                "semantic_error": "",
+                "trace": [*state.get("trace", []), "validate_semantics:skipped"],
+            }
+        spec = build_query_spec(
+            state.get("effective_question", state["question"]),
+            state.get("query_spec", {}),
+        )
+        validation = validate_sql_semantics(spec, state["candidate_sql"])
+        semantic_error = validation.message if not validation.ok else ""
+        return {
+            **state,
+            "query_spec": spec.to_dict(),
+            "semantic_error": semantic_error,
+            "sql_error": semantic_error,
+            "trace": [
+                *state.get("trace", []),
+                "validate_semantics:ok" if validation.ok else f"validate_semantics:error:{semantic_error}",
+            ],
         }
 
     def execute_sql_node(state: AgentState) -> AgentState:
@@ -162,10 +194,20 @@ def build_agent_graph(llm: CompletionGateway | None = None, sql_runner: SQLRunne
             return "prepare_retry"
         return "finalize"
 
+    def route_after_semantic_validation(state: AgentState) -> str:
+        if state.get("plan", {}).get("needs_clarification") or not state.get("candidate_sql"):
+            return "finalize"
+        if not state.get("semantic_error"):
+            return "execute_sql"
+        if state.get("retry_count", 0) < state.get("max_retries", max_retries):
+            return "prepare_retry"
+        return "finalize"
+
     graph = StateGraph(AgentState)
     graph.add_node("classify_intent", classify_intent)
     graph.add_node("prepare_context", prepare_context)
     graph.add_node("generate_sql", generate_sql)
+    graph.add_node("validate_semantics", validate_semantics)
     graph.add_node("execute_sql", execute_sql_node)
     graph.add_node("prepare_retry", prepare_retry)
     graph.add_node("summarize_result", summarize_result)
@@ -173,7 +215,16 @@ def build_agent_graph(llm: CompletionGateway | None = None, sql_runner: SQLRunne
     graph.add_edge(START, "classify_intent")
     graph.add_edge("classify_intent", "prepare_context")
     graph.add_edge("prepare_context", "generate_sql")
-    graph.add_edge("generate_sql", "execute_sql")
+    graph.add_edge("generate_sql", "validate_semantics")
+    graph.add_conditional_edges(
+        "validate_semantics",
+        route_after_semantic_validation,
+        {
+            "prepare_retry": "prepare_retry",
+            "execute_sql": "execute_sql",
+            "finalize": "finalize",
+        },
+    )
     graph.add_conditional_edges(
         "execute_sql",
         route_after_execute,
@@ -191,6 +242,8 @@ def build_agent_graph(llm: CompletionGateway | None = None, sql_runner: SQLRunne
 
 def infer_intent(question: str) -> str:
     normalized = question.lower()
+    if any(keyword in normalized for keyword in ["复购", "会员等级"]):
+        return "user_analysis"
     if any(keyword in normalized for keyword in ["top", "商品", "类目", "滞销", "动销", "销量"]):
         return "product_analysis"
     if any(keyword in normalized for keyword in ["用户", "新客", "老客", "复购", "会员"]):
@@ -211,6 +264,11 @@ def build_answer(state: AgentState) -> str:
         return f"I need to clarify the metric first: {plan.get('clarifying_question')}"
 
     sql_error = state.get("sql_error")
+    semantic_error = state.get("semantic_error")
+    if semantic_error:
+        if language == "zh":
+            return f"生成的查询没有通过业务语义校验，已重试 {state.get('retry_count', 0)} 次。问题：{semantic_error}"
+        return f"The generated query failed semantic validation after {state.get('retry_count', 0)} retries: {semantic_error}"
     if sql_error:
         if language == "zh":
             return f"已生成查询，但执行失败，已重试 {state.get('retry_count', 0)} 次。错误：{sql_error}"
@@ -276,6 +334,8 @@ def stream_agent_events(
             "row_count": final_state.get("row_count", 0),
             "elapsed_ms": final_state.get("elapsed_ms", 0),
             "sql_error": final_state.get("sql_error", ""),
+            "semantic_error": final_state.get("semantic_error", ""),
+            "query_spec": final_state.get("query_spec", {}),
             "chart": final_state.get("chart", {}),
             "trace": final_state.get("trace", []),
             "retrieval_sources": final_state.get("retrieval_sources", []),
