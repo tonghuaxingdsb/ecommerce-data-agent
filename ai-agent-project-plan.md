@@ -161,7 +161,8 @@ CREATE TABLE dim_region (
 - 日期过滤统一处理，避免模型手写复杂日期函数出错
 
 ### 4. 多轮对话与澄清
-- 会话记忆：记住上一轮的表、字段、时间范围
+- 会话记忆：保存上一轮已落地的 `QuerySpec`，追问继承未重新指定的指标、维度、筛选、时间范围和比较周期
+- 槽位优先级：本轮显式约束 > 本轮模型输出 > 上轮结构化口径，避免自然追问因省略指标而误澄清
 - 主动澄清：口径歧义时反问（"指 GMV 还是订单量？"）
 
 ### 5. 安全
@@ -285,6 +286,7 @@ CREATE TABLE dim_region (
 - [x] 前端换 Next.js
 - [x] 结构化语义计划 + 通用 SQL 编译 + 执行前语义校验
 - [x] Next.js 多轮记录、多会话创建/切换、轮次导航、滚动浏览与浏览器历史恢复
+- [x] 结构化多轮槽位继承 + 环比/同比贡献度拆解
 
 #### Phase 3 开发记录（2026-09-16）
 
@@ -293,6 +295,7 @@ CREATE TABLE dim_region (
 - `src/ecommerce_agent/main.py`：新增 `/api/agent/query/stream` SSE 接口。
 - `src/ecommerce_agent/llm.py`：抽象 `CompletionGateway`，支持 DeepSeek/离线规则 provider。
 - `src/ecommerce_agent/semantic.py`：新增 `QuerySpec`、指标/维度组合式 SQL 编译器和语义校验器；显式业务约束优先于模型猜测。
+- `src/ecommerce_agent/conversation.py`：每轮保存结构化 QuerySpec，识别省略指标的贡献/拆解类追问并继承上一轮口径。
 - `src/ecommerce_agent/agent.py`：在 SQL 生成与执行之间新增语义校验节点，错误反馈进入有限 ReAct 修复回路。
 - `src/ecommerce_agent/audit.py`：脱敏 JSONL 审计日志。
 - `apps/web/`：Next.js 16 + TypeScript 前端，包含多轮/多会话历史、SSE 节点进度、ECharts、指标卡、结果表与调试面板；完成记录以有界 `localStorage` 快照跨刷新恢复。
@@ -300,12 +303,13 @@ CREATE TABLE dim_region (
 - `phase3-development-log.md`：记录难点、解决办法和验收限制。
 
 **当前验收状态**
-- `uv run pytest -q`：38 passed，1 warning；包含真实 PostgreSQL 连接与商品复购率组合查询测试。
+- `uv run pytest -q`：42 passed，1 warning；包含真实 PostgreSQL 连接、商品复购率和商品 GMV 贡献查询测试。
 - `uv run python -m compileall -q src scripts apps`：通过。
 - `npm run typecheck` / `npm run build`：通过，首页完成静态预渲染。
 - SQL 安全校验新增跨 schema、危险函数、控制字符和长度限制；API 支持 JSON 与 SSE 两种调用方式。
 - 浏览器真实查询验证：SSE 展示 7 个 LangGraph 节点，返回近 30 天销售分析、指标卡和结果表。
 - 多会话验证：同一会话三轮结果不互相覆盖，侧栏列出每轮问题并可快捷定位，独立 transcript 支持滚轮浏览；刷新后历史与当前会话仍在，可新建独立会话并切回旧会话。后端上下文当前仍是进程内存，API 重启后的持久化上下文留待数据库会话存储阶段。
+- 结构化追问验证：首轮“近 30 天销售额多少？环比上个月呢？”，追问“主要贡献来源是什么商品”；真实 DeepSeek + PostgreSQL 返回商品本期/上期 GMV、增量、增幅与贡献占比，未触发多余澄清。
 - 详细问题记录见 `phase3-development-log.md`。
 
 ### Phase 4：打磨与简历（第 8 周）
