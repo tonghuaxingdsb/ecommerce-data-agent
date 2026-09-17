@@ -37,7 +37,7 @@
 
 ## 验证结果
 
-- `uv run pytest -q`：36 passed，1 warning（FastAPI 测试客户端依赖的上游弃用提示）；包含真实 PostgreSQL 商品复购率查询。
+- `uv run pytest -q`：38 passed，1 warning（FastAPI 测试客户端依赖的上游弃用提示）；包含真实 PostgreSQL 商品复购率查询。
 - `uv run python -m compileall -q src scripts apps`：通过。
 - `npm run typecheck` 与 `npm run build`：通过；Next.js 16.3.5 成功生成静态首页。
 - SSE、provider 选择、SQL 跨 schema/长度约束、审计脱敏均有自动化测试。

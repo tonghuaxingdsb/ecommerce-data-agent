@@ -299,7 +299,7 @@ CREATE TABLE dim_region (
 - `phase3-development-log.md`：记录难点、解决办法和验收限制。
 
 **当前验收状态**
-- `uv run pytest -q`：36 passed，1 warning；包含真实 PostgreSQL 连接与商品复购率组合查询测试。
+- `uv run pytest -q`：38 passed，1 warning；包含真实 PostgreSQL 连接与商品复购率组合查询测试。
 - `uv run python -m compileall -q src scripts apps`：通过。
 - `npm run typecheck` / `npm run build`：通过，首页完成静态预渲染。
 - SQL 安全校验新增跨 schema、危险函数、控制字符和长度限制；API 支持 JSON 与 SSE 两种调用方式。
