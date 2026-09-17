@@ -18,13 +18,14 @@ def build_chinese_analysis(question: str, intent: str, rows: list[dict[str, Any]
 
     first = rows[0]
     spec = build_query_spec(question)
-    if "order_date" in first and any("gmv" in row for row in rows):
-        total_gmv = sum(number_or_zero(row.get("gmv")) for row in rows)
-        total_orders = sum(number_or_zero(row.get("orders")) for row in rows)
-        peak = max(rows, key=lambda row: number_or_zero(row.get("gmv")))
+    if "order_date" in first and spec.metrics:
+        metric = spec.metrics[0]
+        metric_column = METRIC_RESULT_COLUMNS[metric]
+        total = sum(number_or_zero(row.get(metric_column)) for row in rows)
+        peak = max(rows, key=lambda row: number_or_zero(row.get(metric_column)))
         return (
-            f"{spec.time_range or '当前周期'}累计销售额为 {format_money(total_gmv)}，订单量 {format_int(total_orders)} 单。"
-            f"销售峰值出现在 {peak.get('order_date')}，当日销售额 {format_money(peak.get('gmv'))}。"
+            f"{spec.time_range or '当前周期'}累计{SUPPORTED_METRICS[metric]}为 {format_metric_value(metric, total)}。"
+            f"峰值出现在 {peak.get('order_date')}，当日指标值为 {format_metric_value(metric, peak.get(metric_column))}。"
             "建议结合活动日和渠道进一步解释峰值来源。"
         )
 
@@ -46,7 +47,7 @@ def build_chinese_analysis(question: str, intent: str, rows: list[dict[str, Any]
             "建议继续按商品、会员等级、渠道或地区拆分。"
         )
 
-    if intent == "sales_overview":
+    if intent == "sales_overview" and "current_gmv" in first:
         time_intent = parse_time_intent(question)
         current_gmv = format_money(first.get("current_gmv"))
         previous_gmv = format_money(first.get("previous_gmv"))
@@ -65,7 +66,7 @@ def build_chinese_analysis(question: str, intent: str, rows: list[dict[str, Any]
 
     primary_metric = spec.metrics[0] if spec.metrics else None
     primary_dimension = spec.dimensions[0] if spec.dimensions else None
-    if primary_metric and primary_dimension and (primary_metric != "gmv" or primary_dimension not in {"product", "category", "channel"}):
+    if primary_metric and primary_dimension:
         metric_column = METRIC_RESULT_COLUMNS.get(primary_metric)
         dimension_column = DIMENSION_RESULT_COLUMNS.get(primary_dimension)
         if metric_column in first and dimension_column in first:
@@ -74,6 +75,15 @@ def build_chinese_analysis(question: str, intent: str, rows: list[dict[str, Any]
                 f"按{SUPPORTED_METRICS[primary_metric]}看，{SUPPORTED_DIMENSIONS[primary_dimension]}"
                 f"「{first.get(dimension_column)}」排名{direction}，指标值为 {format_metric_value(primary_metric, first.get(metric_column))}。"
                 f"结果已按 {metric_column} {spec.sort_direction.upper()} 排序，可在明细表继续查看其他{SUPPORTED_DIMENSIONS[primary_dimension]}。"
+            )
+
+    if primary_metric and not primary_dimension:
+        metric_column = METRIC_RESULT_COLUMNS.get(primary_metric)
+        if metric_column in first:
+            return (
+                f"{spec.time_range or '当前统计周期'}的{SUPPORTED_METRICS[primary_metric]}为 "
+                f"{format_metric_value(primary_metric, first.get(metric_column))}。"
+                "可以继续按商品、渠道、地区或日期拆分查看贡献。"
             )
 
     if intent == "product_analysis" and "product_name" in first:

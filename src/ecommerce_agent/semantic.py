@@ -520,7 +520,9 @@ def _normalize_metric(value: Any) -> str | None:
 
 def _can_default_to_gmv(question: str, dimensions: tuple[str, ...]) -> bool:
     text = question.lower()
-    return bool(dimensions) and any(token in text for token in ("top", "最高", "排名", "排行", "哪些"))
+    ranking_default = bool(dimensions) and any(token in text for token in ("top", "最高", "排名", "排行", "哪些"))
+    trend_default = "order_date" in dimensions and any(token in text for token in ("销售", "成交", "流水", "趋势"))
+    return ranking_default or trend_default
 
 
 def _explicit_time_range(question: str) -> str | None:
@@ -531,7 +533,7 @@ def _explicit_time_range(question: str) -> str | None:
 
 def _has_explicit_time(question: str) -> bool:
     text = question.lower().replace(" ", "")
-    return bool(re.search(r"近\d+(?:天|日)", text)) or any(marker in text for marker in _TIME_MARKERS[2:])
+    return bool(re.search(r"(?:近|最近)\d+(?:天|日)", text)) or any(marker in text for marker in _TIME_MARKERS[2:])
 
 
 def _is_ranking_question(question: str) -> bool:

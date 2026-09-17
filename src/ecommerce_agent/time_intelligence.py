@@ -16,7 +16,7 @@ class TimeIntent:
 
 def parse_time_intent(question: str) -> TimeIntent:
     text = question.lower().replace(" ", "")
-    day_match = re.search(r"近(\d+)(?:天|日)", text)
+    day_match = re.search(r"(?:近|最近)(\d+)(?:天|日)", text)
     calendar_period: str | None = None
     period_offset = 0
     if day_match:
@@ -26,6 +26,9 @@ def parse_time_intent(question: str) -> TimeIntent:
         days, label = 7, "上周"
         calendar_period = "week"
         period_offset = -1
+    elif "本周" in text or "这周" in text or "这个星期" in text:
+        days, label = 7, "本周"
+        calendar_period = "week"
     elif "本月" in text or "这个月" in text:
         days, label = 30, "本月"
         calendar_period = "month"

@@ -4,6 +4,7 @@ import psycopg
 import pytest
 
 from ecommerce_agent.config import Settings
+from ecommerce_agent.answering import build_fallback_analysis
 from ecommerce_agent.semantic import build_query_spec, validate_sql_semantics
 from ecommerce_agent.sql_tool import execute_sql
 from ecommerce_agent.text_to_sql import fallback_sql_plan
@@ -75,6 +76,31 @@ def test_unsupported_conversion_rate_requests_clarification():
     assert plan.needs_clarification is True
     assert plan.candidate_sql == ""
     assert "曝光" in plan.clarifying_question
+
+
+def test_sales_trend_defaults_to_gmv_and_keeps_recent_time_range():
+    question = "最近30天每日销售趋势"
+    plan = fallback_sql_plan(question, "sales_overview")
+
+    assert plan.query_spec["metrics"] == ("gmv",)
+    assert plan.query_spec["dimensions"] == ("order_date",)
+    assert plan.query_spec["time_range"] == "近 30 天"
+    assert "GROUP BY o.order_date" in plan.candidate_sql
+
+
+def test_fallback_summary_reads_generic_result_columns_without_zero_placeholders():
+    sales_answer = build_fallback_analysis("近30天销售额多少", "sales_overview", [{"gmv": 12345.0}], "zh")
+    product_answer = build_fallback_analysis(
+        "Top10商品是哪些",
+        "product_analysis",
+        [{"product_name": "测试商品", "gmv": 999.0}],
+        "zh",
+    )
+
+    assert "1.23 万元" in sales_answer
+    assert "0.00" not in sales_answer
+    assert "测试商品" in product_answer
+    assert "None" not in product_answer
 
 
 def test_product_repurchase_query_executes_when_postgres_is_available():
