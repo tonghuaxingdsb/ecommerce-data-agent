@@ -1,11 +1,14 @@
 "use client";
 
-import { FormEvent, useMemo, useRef, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { streamAgentQuery } from "@/lib/api";
 import type { AgentResult, AgentStreamEvent, Scalar } from "@/lib/types";
 import { ResultChart } from "./ResultChart";
 
 const EXAMPLES = ["近 30 天销售额多少？环比上个月呢？", "Top10 商品是哪些？", "华东区老客复购率怎么样？", "近 30 天每日销售趋势"];
+const STORAGE_KEY = "commerce-lens-conversations-v1";
+const MAX_CONVERSATIONS = 20;
+const MAX_TURNS = 50;
 const NODE_LABELS: Record<string, string> = {
   classify_intent: "识别意图",
   prepare_context: "检索口径",
@@ -17,45 +20,138 @@ const NODE_LABELS: Record<string, string> = {
   finalize: "整理结果",
 };
 
+interface ChatTurn {
+  id: string;
+  question: string;
+  progress: string[];
+  running: boolean;
+  error: string;
+  result: AgentResult | null;
+  createdAt: number;
+}
+
+interface Conversation {
+  id: string;
+  title: string;
+  turns: ChatTurn[];
+  createdAt: number;
+  updatedAt: number;
+}
+
 export function AgentDashboard() {
   const [question, setQuestion] = useState(EXAMPLES[0]);
-  const [result, setResult] = useState<AgentResult | null>(null);
-  const [progress, setProgress] = useState<string[]>([]);
-  const [running, setRunning] = useState(false);
-  const [error, setError] = useState("");
-  const conversationId = useRef("");
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState("");
+  const [hydrated, setHydrated] = useState(false);
   const abortController = useRef<AbortController | null>(null);
 
-  const metrics = useMemo(() => {
-    if (!result?.rows.length) return [];
-    return result.columns
-      .filter((column) => typeof result.rows[0][column] === "number")
-      .slice(0, 4)
-      .map((column) => ({ label: column, value: result.rows[0][column] }));
-  }, [result]);
+  useEffect(() => {
+    const restored = restoreConversations();
+    const initial = restored.length > 0 ? restored : [createConversation()];
+    setConversations(initial);
+    setActiveConversationId(initial[0].id);
+    setHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(conversations));
+    } catch {
+      // Keep the active session usable when browser storage is unavailable or full.
+    }
+  }, [conversations, hydrated]);
+
+  const activeConversation = useMemo(
+    () => conversations.find((conversation) => conversation.id === activeConversationId) ?? null,
+    [activeConversationId, conversations],
+  );
+  const running = conversations.some((conversation) => conversation.turns.some((turn) => turn.running));
 
   async function submit(event?: FormEvent) {
     event?.preventDefault();
     const normalized = question.trim();
-    if (!normalized || running) return;
-    if (!conversationId.current) conversationId.current = crypto.randomUUID();
+    if (!normalized || running || !activeConversation) return;
+
+    const conversationId = activeConversation.id;
+    const turnId = crypto.randomUUID();
+    const turn: ChatTurn = {
+      id: turnId,
+      question: normalized,
+      progress: [],
+      running: true,
+      error: "",
+      result: null,
+      createdAt: Date.now(),
+    };
+    appendTurn(conversationId, turn);
+    setQuestion("");
     abortController.current = new AbortController();
-    setRunning(true);
-    setError("");
-    setProgress([]);
-    setResult(null);
+
     try {
-      await streamAgentQuery(normalized, conversationId.current, handleEvent, abortController.current.signal);
+      await streamAgentQuery(
+        normalized,
+        conversationId,
+        (streamEvent) => handleEvent(conversationId, turnId, streamEvent),
+        abortController.current.signal,
+      );
     } catch (caught) {
-      if ((caught as Error).name !== "AbortError") setError(caught instanceof Error ? caught.message : "分析失败，请稍后重试。");
+      if ((caught as Error).name !== "AbortError") {
+        updateTurn(conversationId, turnId, (current) => ({
+          ...current,
+          error: caught instanceof Error ? caught.message : "分析失败，请稍后重试。",
+        }));
+      }
     } finally {
-      setRunning(false);
+      updateTurn(conversationId, turnId, (current) => ({ ...current, running: false }));
+      abortController.current = null;
     }
   }
 
-  function handleEvent(event: AgentStreamEvent) {
-    if (event.event === "trace") setProgress((current) => [...current, event.node]);
-    if (event.event === "result") setResult(event.result);
+  function appendTurn(conversationId: string, turn: ChatTurn) {
+    setConversations((current) => current.map((conversation) => {
+      if (conversation.id !== conversationId) return conversation;
+      return {
+        ...conversation,
+        title: conversation.turns.length === 0 ? createTitle(turn.question) : conversation.title,
+        turns: [...conversation.turns, turn].slice(-MAX_TURNS),
+        updatedAt: Date.now(),
+      };
+    }));
+  }
+
+  function updateTurn(conversationId: string, turnId: string, updater: (turn: ChatTurn) => ChatTurn) {
+    setConversations((current) => current.map((conversation) => {
+      if (conversation.id !== conversationId) return conversation;
+      return {
+        ...conversation,
+        turns: conversation.turns.map((turn) => turn.id === turnId ? updater(turn) : turn),
+        updatedAt: Date.now(),
+      };
+    }));
+  }
+
+  function handleEvent(conversationId: string, turnId: string, streamEvent: AgentStreamEvent) {
+    if (streamEvent.event === "trace") {
+      updateTurn(conversationId, turnId, (turn) => ({ ...turn, progress: [...turn.progress, streamEvent.node] }));
+    }
+    if (streamEvent.event === "result") {
+      updateTurn(conversationId, turnId, (turn) => ({ ...turn, result: streamEvent.result }));
+    }
+  }
+
+  function startNewConversation() {
+    if (running) return;
+    const conversation = createConversation();
+    setConversations((current) => [conversation, ...current].slice(0, MAX_CONVERSATIONS));
+    setActiveConversationId(conversation.id);
+    setQuestion(EXAMPLES[0]);
+  }
+
+  function selectConversation(conversationId: string) {
+    if (running || conversationId === activeConversationId) return;
+    setActiveConversationId(conversationId);
+    setQuestion("");
   }
 
   return (
@@ -75,6 +171,29 @@ export function AgentDashboard() {
             <h1>把业务问题，变成清晰答案。</h1>
             <p>自然语言提问，实时完成口径检索、SQL 查询、图表分析和运营结论。</p>
           </div>
+
+          <nav className="conversation-nav" aria-label="对话历史">
+            <div className="conversation-nav-heading">
+              <span>对话记录</span>
+              <button type="button" onClick={startNewConversation} disabled={running || !hydrated}>＋ 新建对话</button>
+            </div>
+            <div className="conversation-list">
+              {conversations.map((conversation) => (
+                <button
+                  type="button"
+                  className={conversation.id === activeConversationId ? "active" : ""}
+                  key={conversation.id}
+                  onClick={() => selectConversation(conversation.id)}
+                  disabled={running}
+                  title={conversation.title}
+                >
+                  <span>{conversation.title}</span>
+                  <small>{conversation.turns.length} 轮</small>
+                </button>
+              ))}
+            </div>
+          </nav>
+
           <div className="examples">
             <span>试试这些问题</span>
             {EXAMPLES.map((example) => <button key={example} onClick={() => setQuestion(example)}>{example}<i>↗</i></button>)}
@@ -104,28 +223,50 @@ export function AgentDashboard() {
             />
             <div className="query-actions">
               <span>↵ Enter 提交 · 支持多轮追问</span>
-              {running ? <button type="button" className="stop-button" onClick={() => abortController.current?.abort()}>停止</button> : <button type="submit" className="run-button">开始分析 <i>→</i></button>}
+              {running
+                ? <button type="button" className="stop-button" onClick={() => abortController.current?.abort()}>停止</button>
+                : <button type="submit" className="run-button" disabled={!hydrated || !activeConversation}>开始分析 <i>→</i></button>}
             </div>
           </form>
 
-          {(running || progress.length > 0) && <ProgressSteps nodes={progress} running={running} />}
-          {error && <div className="error-banner"><strong>分析未完成</strong><span>{error}</span></div>}
-          {!result && !running && !error && <EmptyState />}
-
-          {result && <>
-            <section className="answer-card">
-              <div className="answer-icon">✦</div>
-              <div><p className="eyebrow">AGENT INSIGHT</p><h2>分析结论</h2><p className="answer-text">{result.answer}</p></div>
-            </section>
-            {metrics.length > 0 && <div className="metric-grid">{metrics.map((metric) => <div className="metric-card" key={metric.label}><span>{formatLabel(metric.label)}</span><strong>{formatValue(metric.value)}</strong></div>)}</div>}
-            <ResultChart result={result} />
-            <ResultTable result={result} />
-            <DebugPanel result={result} />
-          </>}
+          {!activeConversation?.turns.length && <EmptyState />}
+          <div className="conversation-thread">
+            {activeConversation?.turns.map((turn) => <ConversationTurnView turn={turn} key={turn.id} />)}
+          </div>
         </section>
       </div>
     </main>
   );
+}
+
+function ConversationTurnView({ turn }: { turn: ChatTurn }) {
+  return (
+    <article className="conversation-turn">
+      <div className="user-message"><span>YOU</span><p>{turn.question}</p></div>
+      {(turn.running || turn.progress.length > 0) && <ProgressSteps nodes={turn.progress} running={turn.running} />}
+      {turn.error && <div className="error-banner"><strong>分析未完成</strong><span>{turn.error}</span></div>}
+      {turn.result && <ResultContent result={turn.result} />}
+    </article>
+  );
+}
+
+function ResultContent({ result }: { result: AgentResult }) {
+  const metrics = result.rows.length > 0
+    ? result.columns
+      .filter((column) => typeof result.rows[0][column] === "number")
+      .slice(0, 4)
+      .map((column) => ({ label: column, value: result.rows[0][column] }))
+    : [];
+  return <>
+    <section className="answer-card">
+      <div className="answer-icon">✦</div>
+      <div><p className="eyebrow">AGENT INSIGHT</p><h2>分析结论</h2><p className="answer-text">{result.answer}</p></div>
+    </section>
+    {metrics.length > 0 && <div className="metric-grid">{metrics.map((metric) => <div className="metric-card" key={metric.label}><span>{formatLabel(metric.label)}</span><strong>{formatValue(metric.value)}</strong></div>)}</div>}
+    <ResultChart result={result} />
+    <ResultTable result={result} />
+    <DebugPanel result={result} />
+  </>;
 }
 
 function ProgressSteps({ nodes, running }: { nodes: string[]; running: boolean }) {
@@ -134,7 +275,7 @@ function ProgressSteps({ nodes, running }: { nodes: string[]; running: boolean }
 }
 
 function EmptyState() {
-  return <section className="empty-state"><div className="orb"><span>⌁</span></div><h2>你的数据，随问随答</h2><p>选择一个示例，或者输入你关心的销售、商品、用户和渠道问题。</p><div><span>销售趋势</span><span>商品排行</span><span>用户复购</span><span>渠道表现</span></div></section>;
+  return <section className="empty-state"><div className="orb"><span>⌁</span></div><h2>开启一段数据对话</h2><p>当前对话还没有消息。选择示例或输入业务问题开始分析。</p><div><span>销售趋势</span><span>商品排行</span><span>用户复购</span><span>渠道表现</span></div></section>;
 }
 
 function ResultTable({ result }: { result: AgentResult }) {
@@ -144,6 +285,53 @@ function ResultTable({ result }: { result: AgentResult }) {
 
 function DebugPanel({ result }: { result: AgentResult }) {
   return <details className="debug-panel"><summary><span>开发调试信息</span><small>Plan · SQL · Trace · RAG</small></summary><div className="debug-content"><div><label>Query spec</label><pre>{JSON.stringify(result.query_spec, null, 2)}</pre></div><div><label>Generated SQL</label><pre>{result.sql || "未生成 SQL"}</pre></div><div className="debug-columns"><div><label>Execution trace</label><ul>{result.trace.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}</ul></div><div><label>RAG sources</label><ul>{result.retrieval_sources.map((item) => <li key={item}>{item}</li>)}</ul></div></div></div></details>;
+}
+
+function createConversation(): Conversation {
+  const now = Date.now();
+  return { id: crypto.randomUUID(), title: "新对话", turns: [], createdAt: now, updatedAt: now };
+}
+
+function createTitle(question: string): string {
+  const compact = question.replaceAll(/\s+/g, " ").trim();
+  return compact.length > 24 ? `${compact.slice(0, 24)}…` : compact;
+}
+
+function restoreConversations(): Conversation[] {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]");
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(isStoredConversation)
+      .slice(0, MAX_CONVERSATIONS)
+      .map((conversation) => ({
+        ...conversation,
+        turns: conversation.turns.slice(-MAX_TURNS).map((turn) => ({
+          ...turn,
+          running: false,
+          error: turn.running && !turn.result ? "页面刷新后，上一次分析已停止，请重新提交。" : turn.error,
+        })),
+      }));
+  } catch {
+    return [];
+  }
+}
+
+function isStoredConversation(value: unknown): value is Conversation {
+  if (!value || typeof value !== "object") return false;
+  const conversation = value as Partial<Conversation>;
+  return typeof conversation.id === "string"
+    && typeof conversation.title === "string"
+    && typeof conversation.createdAt === "number"
+    && typeof conversation.updatedAt === "number"
+    && Array.isArray(conversation.turns)
+    && conversation.turns.every((turn) => Boolean(turn)
+      && typeof turn.id === "string"
+      && typeof turn.question === "string"
+      && Array.isArray(turn.progress)
+      && typeof turn.running === "boolean"
+      && typeof turn.error === "string"
+      && typeof turn.createdAt === "number");
 }
 
 function formatLabel(value: string) { return value.replaceAll("_", " "); }
