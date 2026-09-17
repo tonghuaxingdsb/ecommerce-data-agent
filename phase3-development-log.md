@@ -1,6 +1,6 @@
 # Phase 3 开发记录：工程化
 
-日期：2026-09-16  
+日期：2026-09-16（2026-09-17 追加语义层加固）
 分支：`phase3/engineering`
 
 ## 已完成
@@ -11,6 +11,9 @@
 - SQL 安全加固：限制问题/SQL 长度，拒绝控制字符、非 public schema、危险函数和非只读语句，保留表白名单、只读事务、超时和行数上限。
 - 审计日志：API 以 JSONL 追加记录 request、会话、意图、耗时、结果行数和 SQL 摘要；问题、错误和 SQL 字面量脱敏，原始 API key 不写入日志。
 - Next.js 前端：新增 `apps/web`，使用 App Router、TypeScript 和 ECharts，展示实时节点进度、自然语言结论、指标卡、图表、结果表及折叠调试信息。
+- 结构化语义层：新增 `QuerySpec`，将指标、维度、筛选、时间范围、排序、TopN 和最低样本量分别建模，不再由单一 intent 直接选择整段 SQL。
+- 通用 SQL 编译：GMV、订单量、销量、客单价和复购率可以与商品、类目、渠道、地区、会员等级、日期维度组合；复购率使用“维度 + 用户”内层聚合和维度级外层聚合。
+- 执行前语义校验：LangGraph 增加 `validate_semantics` 节点，检查用户要求的指标、维度、时间、地区和排序是否体现在 SQL 中；不一致时进入已有的有限重试回路。
 
 ## 痛点、难点与解决办法
 
@@ -24,12 +27,21 @@
 | 原生 `EventSource` 只支持 GET，现有 SSE 接口使用 POST 请求体 | 前端使用 `fetch()` + `ReadableStream` 手动解析 SSE frame，保留 question 和 conversation_id 的 JSON 请求格式 |
 | ECharts 依赖浏览器 API，直接服务端渲染可能访问 `window` | 将图表封装为 Client Component，并用 `next/dynamic` 的 `ssr: false` 延迟加载 |
 | Next.js 与 FastAPI 分别运行在 3000/8000 端口 | 后端加入显式 CORS allowlist，通过 `CORS_ORIGINS` 配置，不使用宽泛的 `*` |
+| “什么商品的复购率高”同时含商品与复购，旧关键词路由先命中商品并退化为 GMV Top10 | 将问题拆成 `metric=repurchase_rate` 与 `dimension=product`；显式指标和维度优先于模型猜测 |
+| 为每个自然语言问题维护专用 SQL 模板不可扩展 | 只固化指标定义和维度关联，使用通用编译器组合 SELECT、JOIN、GROUP BY、时间和排序 |
+| SQL 可以安全执行但业务语义可能错误，原有安全校验无法发现 | 增加语义校验节点；例如复购率必须包含按用户的去重订单统计、`paid_orders >= 2`、复购率结果列和正确排序 |
+| RAG 能召回复购率口径，但离线 fallback 不消费检索语义 | LLM 与离线 provider 都输出/消费同一 `QuerySpec`，避免两条链路产生不同口径 |
+| 复购率排名容易被小样本放大 | 分组复购率默认要求至少 20 个购买用户，并同时返回购买用户数与复购用户数供解释 |
+| 旧 fallback 把每日趋势结果当周期对比字段读取，结论显示 0 | 结果摘要先识别日期序列，计算周期合计与峰值日期，不再读取不存在的 `current_gmv` 字段 |
+| `mock` 模式即使已配置 Key 也显示“未配置 DEEPSEEK_API_KEY” | 提示改为“当前使用离线规则 provider”，准确区分 provider 选择与 Key 配置状态 |
 
 ## 验证结果
 
-- `uv run pytest -q`：26 passed，1 warning（FastAPI 测试客户端依赖的上游弃用提示）；真实 PostgreSQL 连接测试已执行通过。
+- `uv run pytest -q`：36 passed，1 warning（FastAPI 测试客户端依赖的上游弃用提示）；包含真实 PostgreSQL 商品复购率查询。
 - `uv run python -m compileall -q src scripts apps`：通过。
 - `npm run typecheck` 与 `npm run build`：通过；Next.js 16.3.5 成功生成静态首页。
 - SSE、provider 选择、SQL 跨 schema/长度约束、审计脱敏均有自动化测试。
-- 浏览器端到端验证：POST SSE 依次显示 6 个处理节点，并渲染真实 PostgreSQL 查询结果。
+- 浏览器端到端验证：POST SSE 展示完整 LangGraph 处理节点，并渲染真实 PostgreSQL 查询结果。
 - PostgreSQL 容器已恢复运行，真实数据库连接与查询链路均已纳入本次验收。
+- 组合语义回归覆盖：商品复购率、商品销量、类目销量、渠道订单量、地区 GMV、近 30 天和华东筛选、不支持的渠道转化率澄清。
+- 商品复购率真实查询结果：按同一商品内用户 paid 去重订单数计算，第一名为“拾光身体乳62”，复购率 5.85%（132/2255），不再误用 GMV 第一名。

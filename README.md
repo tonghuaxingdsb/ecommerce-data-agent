@@ -9,6 +9,7 @@ Phase 0 delivers the project skeleton for an ecommerce natural-language data ana
 - Phase 1 MVP chain: Text-to-SQL, read-only SQL validation/execution, bounded ReAct retry, natural-language result analysis and a Streamlit demo.
 - Phase 2 experience layer: dictionary retrieval, time-intelligence SQL, multi-turn clarification, automatic chart selection and result summaries.
 - Phase 3 engineering layer: pluggable LLM providers, LangGraph SSE progress events, SQL hardening and JSONL audit logging.
+- Composable semantic query layer: the LLM produces a grounded `QuerySpec` (metrics, dimensions, filters, time and ranking), then SQL is generated and semantically validated before execution.
 - Next.js 16 frontend with live Agent progress, ECharts visualizations, result tables and SQL/RAG diagnostics.
 
 ## Quick Start
@@ -83,6 +84,22 @@ See [phase2-development-log.md](phase2-development-log.md) for the implementatio
 - SQL validation additionally enforces a maximum length, rejects non-public schemas and blocks dangerous configuration/file functions.
 - API requests append redacted audit records to `AUDIT_LOG_PATH` (default `logs/audit.jsonl`). The log stores a SQL hash and sanitized preview rather than raw literals.
 - The Next.js frontend consumes POST-based SSE through `fetch()`/`ReadableStream`; FastAPI allows only the configured local `CORS_ORIGINS` by default.
+- Questions are no longer routed from a single coarse intent directly to a fixed SQL template. Explicit user constraints are represented as `metrics + dimensions + filters + time_range + ranking`; the same metric can be combined with product, category, channel, region, membership level or date dimensions.
+- A semantic validation node runs before SQL execution. It rejects executable-but-wrong queries such as answering product repurchase rate with GMV ranking, and sends precise validation feedback through the bounded repair loop.
+- The offline provider uses the same semantic plan and SQL compiler. Its result banner identifies the active offline provider instead of incorrectly claiming that `DEEPSEEK_API_KEY` is missing.
+
+Example semantic plan for `什么商品的复购率高`:
+
+```json
+{
+  "metrics": ["repurchase_rate"],
+  "dimensions": ["product"],
+  "filters": [{"field": "status", "operator": "=", "value": "paid"}],
+  "sort_by": "repurchase_rate",
+  "sort_direction": "desc",
+  "minimum_sample_size": 20
+}
+```
 
 See [phase3-development-log.md](phase3-development-log.md) for engineering notes and verification limits.
 
