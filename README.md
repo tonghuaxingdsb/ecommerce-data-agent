@@ -51,7 +51,7 @@ npm install
 npm run dev
 ```
 
-Open `http://127.0.0.1:3000`. The frontend consumes `POST /api/agent/query/stream` with a fetch stream, renders LangGraph progress in real time, and displays business conclusions, metrics, ECharts, result tables and a collapsible debugging panel. One conversation can retain multiple question/result turns, while **新建对话** creates an independent `conversation_id`. The browser keeps at most 20 conversations and 50 turns per conversation in `localStorage`, so completed UI history survives a page refresh.
+Open `http://127.0.0.1:3000`. The frontend consumes `POST /api/agent/query/stream` with a fetch stream, renders LangGraph progress in real time, and displays business conclusions, metrics, ECharts, result tables and a collapsible debugging panel. One conversation can retain multiple question/result turns, while **新建对话** creates an independent `conversation_id`. The active conversation expands every turn in the sidebar; each question can be clicked to locate its result, and the fixed-height transcript supports mouse-wheel scrolling without moving the composer. The browser keeps at most 20 conversations and 50 turns per conversation in `localStorage`, including the selected conversation, so completed UI history survives a page refresh.
 
 Production verification:
 
