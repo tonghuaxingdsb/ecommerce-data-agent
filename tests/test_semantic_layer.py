@@ -88,6 +88,40 @@ def test_sales_trend_defaults_to_gmv_and_keeps_recent_time_range():
     assert "GROUP BY o.order_date" in plan.candidate_sql
 
 
+def test_inventory_planning_uses_registered_forecast_capability():
+    question = "按照趋势下个月各种商品应该准备多少库存量"
+
+    plan = fallback_sql_plan(question, "inventory_planning")
+
+    assert plan.intent == "inventory_planning"
+    assert plan.needs_clarification is False
+    assert plan.query_spec["task_type"] == "inventory_planning"
+    assert plan.query_spec["capability"] == "inventory_forecast"
+    assert plan.query_spec["metrics"] == ("units",)
+    assert plan.query_spec["dimensions"] == ("product",)
+    assert plan.query_spec["training_window_days"] == 90
+    assert plan.query_spec["forecast_horizon"] == "next_calendar_month"
+    assert plan.query_spec["safety_stock_days"] == 7
+    assert "regr_slope" in plan.candidate_sql
+    assert "forecast_units" in plan.candidate_sql
+    assert "current_stock" in plan.candidate_sql
+    assert "recommended_restock" in plan.candidate_sql
+    assert "WHERE recommended_restock > 0" in plan.candidate_sql
+    assert "ORDER BY recommended_restock DESC" in plan.candidate_sql
+    assert plan.chart_y == "recommended_restock"
+    assert validate_sql_semantics(build_query_spec(question), plan.candidate_sql).ok is True
+
+
+def test_unregistered_forecast_does_not_fall_back_to_gmv():
+    plan = fallback_sql_plan("预测下个月销售额", "forecasting")
+
+    assert plan.intent == "forecasting"
+    assert plan.needs_clarification is True
+    assert plan.candidate_sql == ""
+    assert plan.query_spec["capability"] == "unsupported_forecast"
+    assert "当前仅注册" in plan.clarifying_question
+
+
 def test_product_contribution_follow_up_inherits_metric_time_and_comparison():
     # Use the exact tuple-based representation stored by ConversationTurn.
     inherited = build_query_spec("近 30 天销售额多少？环比上个月呢？").to_dict()
@@ -187,3 +221,34 @@ def test_product_gmv_contribution_follow_up_executes_when_postgres_is_available(
     assert result.ok is True
     assert result.columns == ["product_name", "current_gmv", "previous_gmv", "gmv_change", "change_pct", "contribution_pct"]
     assert result.rows[0]["gmv_change"] >= result.rows[1]["gmv_change"]
+
+
+def test_inventory_forecast_executes_when_postgres_is_available():
+    try:
+        with psycopg.connect(DATABASE_URL, connect_timeout=1) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT 1")
+    except psycopg.OperationalError:
+        pytest.skip("PostgreSQL is not available.")
+
+    plan = fallback_sql_plan("按照趋势下个月各种商品应该准备多少库存量", "inventory_planning")
+    result = execute_sql(
+        plan.candidate_sql,
+        settings=Settings(database_url=DATABASE_URL, sql_max_rows=200, sql_timeout_ms=5000),
+    )
+
+    assert result.ok is True, result.error
+    assert result.columns == [
+        "product_name",
+        "forecast_start",
+        "forecast_end",
+        "current_stock",
+        "avg_daily_units",
+        "trend_units_per_day",
+        "forecast_units",
+        "safety_stock_units",
+        "target_stock",
+        "recommended_restock",
+    ]
+    assert result.row_count > 0
+    assert result.rows[0]["recommended_restock"] >= result.rows[-1]["recommended_restock"]

@@ -95,6 +95,7 @@ def test_agent_graph_runs_from_question_to_answer():
     assert "SELECT" not in result["answer"]
     assert result["trace"] == [
         "conversation_context:history=0,inherited=False",
+        "match_capability:semantic_sql",
         "classify_intent:sales_overview",
         "detect_language:zh",
         "prepare_context:default_schema_and_metrics",
@@ -179,3 +180,32 @@ ORDER BY gmv DESC
     assert "react_retry:1" in result["trace"]
     assert "validate_semantics:ok" in result["trace"]
     assert result["rows"][0]["repurchase_rate_pct"] == 20.0
+
+
+def test_agent_graph_routes_inventory_plan_without_asking_llm_for_sql():
+    gateway = StubGateway()
+
+    def inventory_runner(sql: str) -> SQLExecutionResult:
+        assert "regr_slope" in sql
+        assert "recommended_restock" in sql
+        return SQLExecutionResult(
+            ok=True,
+            sql=sql,
+            executable_sql=sql,
+            columns=["product_name", "forecast_units", "recommended_restock"],
+            rows=[{"product_name": "测试商品", "forecast_units": 120, "recommended_restock": 30}],
+            row_count=1,
+            elapsed_ms=1,
+            error=None,
+        )
+
+    result = build_agent_graph(gateway, sql_runner=inventory_runner).invoke(
+        {"question": "按照趋势下个月各种商品应该准备多少库存量", "trace": []}
+    )
+
+    assert gateway.calls == 0
+    assert result["intent"] == "inventory_planning"
+    assert result["query_spec"]["capability"] == "inventory_forecast"
+    assert "match_capability:inventory_forecast" in result["trace"]
+    assert "plan_capability:inventory_forecast" in result["trace"]
+    assert result["row_count"] == 1

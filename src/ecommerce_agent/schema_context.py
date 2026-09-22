@@ -12,6 +12,7 @@ discount_amount, channel, payment_method, is_new_user, status)
 
 dim_product(product_id, product_name, category, brand, price, stock, shelf_date, product_status)
 - category 是商品类目，stock 可用于判断滞销/动销
+- 库存规划可用历史 paid 销量预测需求并减去 stock；当前模型没有在途库存、采购提前期和服务水平字段
 
 dim_user(user_id, register_date, province, city, region_id, vip_level)
 - is_new_user 在 fact_orders 中标识该用户首单，可用于新客/老客分析
@@ -32,5 +33,5 @@ METRIC_CONTEXT = """
 - 销量：SUM(fact_orders.quantity)，过滤 status = 'paid'
 - 新客订单：fact_orders.is_new_user = true 且 status = 'paid'
 - 复购：同一 user_id 在统计周期内 paid 订单数 >= 2
+- 基线库存建议：下个自然月预测销量 + 7 天安全库存 - 当前库存；预测使用最近 90 天逐日 paid 销量趋势，并明确披露在途库存和采购提前期按 0 的假设
 """.strip()
-

@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from threading import Lock
 from typing import Any, Iterable
 
+from ecommerce_agent.capabilities import requires_fresh_context
+
 
 @dataclass(frozen=True)
 class ConversationTurn:
@@ -40,8 +42,28 @@ def is_follow_up_question(
 ) -> bool:
     if not list(history or []):
         return False
+    if requires_fresh_context(question):
+        return False
     text = question.strip().lower().replace(" ", "")
-    direct_markers = ("这个", "这些", "刚才", "上一", "继续", "它", "该", "呢", "那个", "其中", "再看", "进一步")
+    direct_markers = (
+        "这个",
+        "这些",
+        "刚才",
+        "上一",
+        "继续",
+        "它",
+        "该商品",
+        "该类目",
+        "该渠道",
+        "该地区",
+        "该指标",
+        "该问题",
+        "呢",
+        "那个",
+        "其中",
+        "再看",
+        "进一步",
+    )
     if any(marker in text for marker in direct_markers):
         return True
     discourse_markers = ("贡献来源", "主要贡献", "增长贡献", "拉动", "驱动", "原因", "拆解", "细分")

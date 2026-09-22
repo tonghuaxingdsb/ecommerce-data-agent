@@ -4,6 +4,7 @@ import re
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Iterable
 
+from ecommerce_agent.capabilities import match_capability
 from ecommerce_agent.time_intelligence import build_period_predicates, parse_time_intent
 
 
@@ -116,6 +117,12 @@ class QuerySpec:
     minimum_sample_size: int | None = None
     analysis_type: str = "aggregate"
     comparison: str | None = None
+    task_type: str = "descriptive_analysis"
+    capability: str = "semantic_sql"
+    training_window_days: int | None = None
+    forecast_horizon: str | None = None
+    safety_stock_days: int | None = None
+    assumptions: tuple[str, ...] = ()
     needs_clarification: bool = False
     clarifying_question: str = ""
 
@@ -156,6 +163,34 @@ def build_query_spec(
 
     payload = payload or {}
     inherited = inherited or {}
+    capability = match_capability(question)
+    if capability.capability == "inventory_forecast":
+        return QuerySpec(
+            metrics=("units",),
+            dimensions=("product",),
+            filters=(QueryFilter(field="status", operator="=", value="paid"),),
+            analysis_type="inventory_plan",
+            task_type=capability.task_type,
+            capability=capability.capability,
+            training_window_days=90,
+            forecast_horizon="next_calendar_month",
+            safety_stock_days=7,
+            assumptions=(
+                "使用最近 90 天逐日 paid 销量的线性趋势作为基线预测",
+                "安全库存按预测日均销量的 7 天计算",
+                "当前数据没有在途库存和采购提前期，暂按 0 处理",
+            ),
+        )
+    if not capability.supported:
+        return QuerySpec(
+            task_type=capability.task_type,
+            capability=capability.capability,
+            needs_clarification=True,
+            clarifying_question=(
+                f"{capability.reason}。请改问‘按趋势估算下个月各商品应补多少库存’，"
+                "或先补充对应预测目标的数据与预测工具。"
+            ),
+        )
     supplied_metrics = _normalize_many(payload.get("metrics"), _METRIC_ALIASES)
     supplied_dimensions = _normalize_many(payload.get("dimensions"), _DIMENSION_ALIASES)
     inherited_metrics = _normalize_many(inherited.get("metrics"), _METRIC_ALIASES)
@@ -237,6 +272,8 @@ def build_query_spec(
         minimum_sample_size=minimum_sample_size,
         analysis_type=analysis_type,
         comparison=comparison,
+        task_type=capability.task_type,
+        capability=capability.capability,
         needs_clarification=bool(clarification),
         clarifying_question=clarification,
     )
@@ -247,6 +284,8 @@ def compile_query_spec(spec: QuerySpec, question: str) -> CompiledQuery:
         return CompiledQuery(sql="", summary=spec.clarifying_question)
     if not spec.metrics:
         return CompiledQuery(sql="", summary="没有解析到可执行指标。")
+    if spec.capability == "inventory_forecast":
+        return _compile_inventory_forecast_query(spec)
     if spec.analysis_type == "contribution" and spec.comparison and "gmv" in spec.metrics and spec.dimensions:
         return _compile_gmv_contribution_query(spec, question)
     if "repurchase_rate" in spec.metrics:
@@ -263,6 +302,20 @@ def validate_sql_semantics(spec: QuerySpec, sql: str) -> SemanticValidation:
         return SemanticValidation(ok=False, errors=("候选 SQL 为空",))
     if not re.search(r"\bstatus\s*=\s*'paid'", normalized):
         errors.append("查询必须过滤 paid 订单")
+
+    if spec.capability == "inventory_forecast":
+        required = (
+            "product_name",
+            "quantity",
+            "current_stock",
+            "forecast_units",
+            "safety_stock_units",
+            "target_stock",
+            "recommended_restock",
+        )
+        missing = [column for column in required if column not in normalized]
+        if missing:
+            errors.append(f"库存规划查询缺少字段：{', '.join(missing)}")
 
     for metric in spec.metrics:
         if metric == "gmv" and not ("sum(" in normalized and ".amount" in normalized and "gmv" in normalized):
@@ -300,6 +353,104 @@ def validate_sql_semantics(spec: QuerySpec, sql: str) -> SemanticValidation:
 
 def extract_area_filter(question: str) -> str | None:
     return next((area for area in _AREA_NAMES if area in question), None)
+
+
+def _compile_inventory_forecast_query(spec: QuerySpec) -> CompiledQuery:
+    training_days = spec.training_window_days or 90
+    safety_days = spec.safety_stock_days or 7
+    sql = f"""
+WITH bounds AS (
+  SELECT max(order_date)::date AS end_date,
+         (date_trunc('month', max(order_date)) + INTERVAL '1 month')::date AS forecast_start,
+         (date_trunc('month', max(order_date)) + INTERVAL '2 months' - INTERVAL '1 day')::date AS forecast_end
+  FROM fact_orders
+), product_days AS (
+  SELECT p.product_id,
+         p.product_name,
+         p.stock AS current_stock,
+         d.day::date AS sales_date,
+         (d.day::date - (b.end_date - INTERVAL '{training_days - 1} days')::date) AS day_index,
+         COALESCE(SUM(o.quantity), 0)::numeric AS daily_units
+  FROM dim_product p
+  CROSS JOIN bounds b
+  CROSS JOIN LATERAL generate_series(
+    b.end_date - INTERVAL '{training_days - 1} days',
+    b.end_date,
+    INTERVAL '1 day'
+  ) AS d(day)
+  LEFT JOIN fact_orders o
+    ON o.product_id = p.product_id
+   AND o.order_date = d.day::date
+   AND o.status = 'paid'
+  WHERE p.product_status = 'active'
+  GROUP BY p.product_id, p.product_name, p.stock, d.day, b.end_date
+), trend_stats AS (
+  SELECT product_id,
+         product_name,
+         current_stock,
+         ROUND(AVG(daily_units), 4) AS avg_daily_units,
+         ROUND(COALESCE(regr_slope(daily_units, day_index), 0)::numeric, 6) AS trend_units_per_day
+  FROM product_days
+  GROUP BY product_id, product_name, current_stock
+), forecast AS (
+  SELECT s.product_id,
+         s.product_name,
+         s.current_stock,
+         s.avg_daily_units,
+         s.trend_units_per_day,
+         b.forecast_start,
+         b.forecast_end,
+         COUNT(f.day)::int AS forecast_horizon_days,
+         CEIL(SUM(GREATEST(
+           0,
+           s.avg_daily_units + s.trend_units_per_day * (f.day::date - b.end_date)
+         )))::int AS forecast_units
+  FROM trend_stats s
+  CROSS JOIN bounds b
+  CROSS JOIN LATERAL generate_series(b.forecast_start, b.forecast_end, INTERVAL '1 day') AS f(day)
+  GROUP BY s.product_id, s.product_name, s.current_stock, s.avg_daily_units,
+           s.trend_units_per_day, b.forecast_start, b.forecast_end
+), inventory_plan AS (
+  SELECT *,
+         CEIL(forecast_units::numeric / NULLIF(forecast_horizon_days, 0) * {safety_days})::int AS safety_stock_units
+  FROM forecast
+), recommendations AS (
+  SELECT product_name,
+         forecast_start,
+         forecast_end,
+         current_stock,
+         avg_daily_units,
+         trend_units_per_day,
+         forecast_units,
+         safety_stock_units,
+         forecast_units + safety_stock_units AS target_stock,
+         GREATEST(forecast_units + safety_stock_units - current_stock, 0)::int AS recommended_restock
+  FROM inventory_plan
+)
+SELECT product_name,
+       forecast_start,
+       forecast_end,
+       current_stock,
+       avg_daily_units,
+       trend_units_per_day,
+       forecast_units,
+       safety_stock_units,
+       target_stock,
+       recommended_restock
+FROM recommendations
+WHERE recommended_restock > 0
+ORDER BY recommended_restock DESC, forecast_units DESC, product_name
+""".strip()
+    return CompiledQuery(
+        sql=sql,
+        summary=(
+            f"使用最近 {training_days} 天逐日 paid 销量趋势预测下个自然月各商品需求，"
+            f"并按 {safety_days} 天安全库存减去当前库存计算建议补货量，仅列出建议补货量大于 0 的商品。"
+        ),
+        chart_type="bar",
+        chart_x="product_name",
+        chart_y="recommended_restock",
+    )
 
 
 def _compile_additive_query(spec: QuerySpec, question: str) -> CompiledQuery:

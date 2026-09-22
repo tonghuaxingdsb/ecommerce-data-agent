@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from ecommerce_agent.charting import build_chart_spec
-from ecommerce_agent.conversation import ConversationTurn, inherited_query_spec, is_ambiguous_metric_question, resolve_follow_up
+from ecommerce_agent.capabilities import match_capability
+from ecommerce_agent.conversation import ConversationTurn, inherited_query_spec, is_ambiguous_metric_question, is_follow_up_question, resolve_follow_up
 from ecommerce_agent.agent import infer_intent
 from ecommerce_agent.rag import DictionaryRetriever, retrieve_rag_context
 from ecommerce_agent.text_to_sql import fallback_sql_plan
@@ -80,6 +81,26 @@ def test_contribution_follow_up_inherits_structured_query_spec():
 
     assert "上一轮问题" in effective
     assert inherited_query_spec("主要贡献来源是什么商品", history) == previous_spec
+
+
+def test_inventory_planning_is_a_fresh_capability_not_a_follow_up():
+    question = "按照趋势下个月各种商品应该准备多少库存量"
+    history = [ConversationTurn(question="主要贡献来源是什么商品", query_spec={"metrics": ["gmv"]})]
+
+    decision = match_capability(question)
+
+    assert decision.task_type == "inventory_planning"
+    assert decision.capability == "inventory_forecast"
+    assert decision.inherit_context is False
+    assert is_follow_up_question(question, history) is False
+    assert inherited_query_spec(question, history) == {}
+    assert resolve_follow_up(question, history) == question
+
+
+def test_single_character_gai_does_not_make_yinggai_a_follow_up():
+    history = [ConversationTurn(question="近 30 天销售额多少？")]
+
+    assert is_follow_up_question("各种商品应该准备多少库存", history) is False
 
 
 def test_chart_spec_infers_line_chart_for_date_results():

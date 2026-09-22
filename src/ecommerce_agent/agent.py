@@ -5,6 +5,7 @@ from typing import Any, Callable, TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from ecommerce_agent.answering import build_fallback_analysis
+from ecommerce_agent.capabilities import match_capability
 from ecommerce_agent.charting import build_chart_spec
 from ecommerce_agent.conversation import ConversationTurn, inherited_query_spec, resolve_follow_up
 from ecommerce_agent.language import detect_response_language
@@ -13,7 +14,7 @@ from ecommerce_agent.rag import retrieve_rag_context
 from ecommerce_agent.schema_context import DEFAULT_SCHEMA_CONTEXT, METRIC_CONTEXT
 from ecommerce_agent.semantic import build_query_spec, validate_sql_semantics
 from ecommerce_agent.sql_tool import SQLExecutionResult, execute_sql
-from ecommerce_agent.text_to_sql import parse_sql_plan
+from ecommerce_agent.text_to_sql import fallback_sql_plan, parse_sql_plan
 
 
 class AgentState(TypedDict, total=False):
@@ -24,6 +25,8 @@ class AgentState(TypedDict, total=False):
     schema_context: str
     metric_context: str
     intent: str
+    task_type: str
+    capability: str
     llm_response: str
     llm_configured: bool
     plan: dict[str, Any]
@@ -57,6 +60,7 @@ def build_agent_graph(llm: CompletionGateway | None = None, sql_runner: SQLRunne
 
     def classify_intent(state: AgentState) -> AgentState:
         question = state["question"]
+        capability = match_capability(question)
         effective_question = resolve_follow_up(question, state.get("history"))
         inherited_spec = inherited_query_spec(question, state.get("history"))
         intent = infer_intent(effective_question)
@@ -66,12 +70,15 @@ def build_agent_graph(llm: CompletionGateway | None = None, sql_runner: SQLRunne
             "effective_question": effective_question,
             "inherited_query_spec": inherited_spec,
             "intent": intent,
+            "task_type": capability.task_type,
+            "capability": capability.capability,
             "response_language": response_language,
             "retry_count": state.get("retry_count", 0),
             "max_retries": state.get("max_retries", max_retries),
             "trace": [
                 *state.get("trace", []),
                 f"conversation_context:history={len(state.get('history') or [])},inherited={bool(inherited_spec)}",
+                f"match_capability:{capability.capability}",
                 f"classify_intent:{intent}",
                 f"detect_language:{response_language}",
             ],
@@ -92,6 +99,24 @@ def build_agent_graph(llm: CompletionGateway | None = None, sql_runner: SQLRunne
         }
 
     def generate_sql(state: AgentState) -> AgentState:
+        if state.get("capability") != "semantic_sql":
+            plan = fallback_sql_plan(
+                state["question"],
+                state["intent"],
+                inherited_query_spec=state.get("inherited_query_spec"),
+            )
+            return {
+                **state,
+                "intent": plan.intent,
+                "llm_response": "",
+                "llm_configured": gateway.is_configured,
+                "plan": plan.to_dict(),
+                "query_spec": plan.query_spec,
+                "candidate_sql": plan.candidate_sql,
+                "semantic_error": "",
+                "sql_error": "",
+                "trace": [*state.get("trace", []), f"plan_capability:{state.get('capability')}"],
+            }
         result = gateway.complete(
             question=state.get("effective_question", state["question"]),
             schema_context=state["schema_context"],
@@ -255,6 +280,11 @@ def build_agent_graph(llm: CompletionGateway | None = None, sql_runner: SQLRunne
 
 
 def infer_intent(question: str) -> str:
+    capability = match_capability(question)
+    if capability.capability == "inventory_forecast":
+        return "inventory_planning"
+    if not capability.supported:
+        return capability.task_type
     normalized = question.lower()
     if any(keyword in normalized for keyword in ["复购", "会员等级"]):
         return "user_analysis"

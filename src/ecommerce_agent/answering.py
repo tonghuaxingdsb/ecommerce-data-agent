@@ -14,10 +14,26 @@ def build_fallback_analysis(question: str, intent: str, rows: list[dict[str, Any
 
 def build_chinese_analysis(question: str, intent: str, rows: list[dict[str, Any]]) -> str:
     if not rows:
+        if intent == "inventory_planning":
+            return "按当前趋势预测和安全库存假设，没有商品需要补货。建议仍结合在途库存、采购提前期和活动计划复核。"
         return "这次查询没有返回数据。建议先放宽时间范围或确认筛选条件是否过窄。"
 
     first = rows[0]
     spec = build_query_spec(question)
+    if "recommended_restock" in first:
+        total_restock = sum(number_or_zero(row.get("recommended_restock")) for row in rows)
+        top_rows = [row for row in rows if number_or_zero(row.get("recommended_restock")) > 0][:3]
+        top_items = "、".join(
+            f"{row.get('product_name')} {format_int(row.get('recommended_restock'))} 件" for row in top_rows
+        ) or "暂无需要补货的商品"
+        return (
+            f"按最近 {spec.training_window_days or 90} 天逐日 paid 销量趋势估算，"
+            f"{first.get('forecast_start')} 至 {first.get('forecast_end')} 共有 {len(rows)} 个商品需要补货，"
+            f"建议补货合计约 {format_int(total_restock)} 件。"
+            f"建议补货量最高的商品为：{top_items}。"
+            f"该结果按 {spec.safety_stock_days or 7} 天安全库存计算，并假设在途库存和采购提前期为 0；"
+            "它是基线计划，不是确定采购指令，实际下单前应补充在途库存、采购提前期和目标服务水平。"
+        )
     if "gmv_change" in first:
         dimension = next((item for item in spec.dimensions if DIMENSION_RESULT_COLUMNS.get(item) in first), None)
         dimension_column = DIMENSION_RESULT_COLUMNS.get(dimension or "")

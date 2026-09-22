@@ -83,7 +83,7 @@ def parse_sql_plan(
     raw_spec = payload.get("query_spec") if isinstance(payload.get("query_spec"), dict) else {}
     spec = build_query_spec(question, raw_spec, inherited=inherited_query_spec)
     candidate_sql = str(payload.get("candidate_sql") or "")
-    force_compiled = spec.analysis_type == "contribution"
+    force_compiled = spec.analysis_type == "contribution" or spec.capability != "semantic_sql"
     compiled = compile_query_spec(spec, question) if not candidate_sql or force_compiled else None
     return SQLPlan(
         intent=_intent_from_spec(spec, str(payload.get("intent") or default_intent)),
@@ -184,6 +184,10 @@ def default_steps() -> list[str]:
 
 
 def _intent_from_spec(spec: QuerySpec, default: str) -> str:
+    if spec.capability == "inventory_forecast":
+        return "inventory_planning"
+    if spec.capability.startswith("unsupported_"):
+        return spec.task_type
     if any(dimension in spec.dimensions for dimension in ("product", "category")):
         return "product_analysis"
     if "channel" in spec.dimensions:

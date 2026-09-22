@@ -45,7 +45,7 @@ DATA_DICTIONARY: tuple[DictionaryItem, ...] = (
     DictionaryItem("data", "fact_orders.quantity", "订单购买件数，用于销量。", "fact_orders", "quantity", synonyms=("销量", "件数", "卖了多少")),
     DictionaryItem("data", "dim_product.product_name", "商品展示名称。", "dim_product", "product_name", synonyms=("商品", "货品", "SKU")),
     DictionaryItem("data", "dim_product.category", "商品所属类目。", "dim_product", "category", synonyms=("类目", "品类")),
-    DictionaryItem("data", "dim_product.stock", "当前库存数量，可用于识别滞销。", "dim_product", "stock", synonyms=("库存", "存货", "滞销")),
+    DictionaryItem("data", "dim_product.stock", "当前库存数量，可用于识别滞销和计算基线补货建议。", "dim_product", "stock", synonyms=("库存", "存货", "滞销", "备货", "补货")),
     DictionaryItem("data", "dim_region.area", "大区名称，如华东、华南、华北。", "dim_region", "area", synonyms=("地区", "区域", "大区")),
     DictionaryItem("data", "dim_user.vip_level", "用户会员等级。", "dim_user", "vip_level", synonyms=("会员", "等级")),
 )
@@ -125,4 +125,3 @@ DEFAULT_RETRIEVER = DictionaryRetriever()
 
 def retrieve_rag_context(question: str, top_k: int = 8) -> tuple[str, str, list[str]]:
     return DEFAULT_RETRIEVER.build_context(question, top_k=top_k)
-
