@@ -12,6 +12,20 @@ def build_fallback_analysis(question: str, intent: str, rows: list[dict[str, Any
     return build_english_analysis(question, intent, rows)
 
 
+def is_usable_analysis(text: str, language: str) -> bool:
+    stripped = text.strip()
+    minimum_length = 16 if language == "zh" else 30
+    if len(stripped) < minimum_length:
+        return False
+    if stripped.endswith(("（", "(", "[", "【", "：", ":", "，", ",", "；", ";", "、")):
+        return False
+    for opening, closing in (("（", "）"), ("(", ")"), ("[", "]"), ("【", "】")):
+        if stripped.count(opening) != stripped.count(closing):
+            return False
+    incomplete_endings = ("例如", "包括", "分别为", "如下", "其中", "以及", "因为", "因此为")
+    return not stripped.endswith(incomplete_endings)
+
+
 def build_chinese_analysis(question: str, intent: str, rows: list[dict[str, Any]]) -> str:
     if not rows:
         if intent == "inventory_planning":

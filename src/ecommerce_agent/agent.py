@@ -4,7 +4,7 @@ from typing import Any, Callable, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
-from ecommerce_agent.answering import build_fallback_analysis
+from ecommerce_agent.answering import build_fallback_analysis, is_usable_analysis
 from ecommerce_agent.capabilities import match_capability
 from ecommerce_agent.charting import build_chart_spec
 from ecommerce_agent.conversation import ConversationTurn, inherited_query_spec, resolve_follow_up
@@ -209,19 +209,40 @@ def build_agent_graph(llm: CompletionGateway | None = None, sql_runner: SQLRunne
         }
 
     def summarize_result(state: AgentState) -> AgentState:
+        language = state.get("response_language", "zh")
+        fallback_analysis = build_fallback_analysis(
+            question=state["question"],
+            intent=state["intent"],
+            rows=state.get("rows", []),
+            language=language,
+        )
+        if state.get("capability") == "inventory_forecast":
+            return {
+                **state,
+                "natural_language_analysis": fallback_analysis,
+                "trace": [*state.get("trace", []), "summarize_result:deterministic_capability"],
+            }
         result = gateway.summarize(
             question=state.get("effective_question", state["question"]),
             intent=state["intent"],
             plan=state.get("plan", {}),
             columns=state.get("columns", []),
             rows=state.get("rows", []),
-            language=state.get("response_language", "zh"),
+            language=language,
         )
+        use_model_analysis = is_usable_analysis(result.text, language)
         return {
             **state,
-            "natural_language_analysis": result.text,
+            "natural_language_analysis": result.text.strip() if use_model_analysis else fallback_analysis,
             "llm_configured": state.get("llm_configured", False) or result.configured,
-            "trace": [*state.get("trace", []), "summarize_result:deepseek" if result.configured else "summarize_result:fallback"],
+            "trace": [
+                *state.get("trace", []),
+                "summarize_result:deepseek"
+                if result.configured and use_model_analysis
+                else "summarize_result:fallback_invalid"
+                if result.configured
+                else "summarize_result:fallback",
+            ],
         }
 
     def route_after_execute(state: AgentState) -> str:

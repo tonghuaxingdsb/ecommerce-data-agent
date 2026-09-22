@@ -12,6 +12,7 @@ from ecommerce_agent.text_to_sql import fallback_sql_plan
 class StubGateway:
     def __init__(self) -> None:
         self.calls = 0
+        self.summary_calls = 0
 
     @property
     def is_configured(self) -> bool:
@@ -55,6 +56,7 @@ WHERE o.status = 'paid' AND o.order_date BETWEEN end_date - INTERVAL '29 days' A
         rows: list[dict[str, Any]],
         language: str,
     ) -> LLMResult:
+        self.summary_calls += 1
         return LLMResult(text="近 30 天销售额表现稳定，这是面向运营的中文分析。", configured=True)
 
 
@@ -192,8 +194,16 @@ def test_agent_graph_routes_inventory_plan_without_asking_llm_for_sql():
             ok=True,
             sql=sql,
             executable_sql=sql,
-            columns=["product_name", "forecast_units", "recommended_restock"],
-            rows=[{"product_name": "测试商品", "forecast_units": 120, "recommended_restock": 30}],
+            columns=["product_name", "forecast_start", "forecast_end", "forecast_units", "recommended_restock"],
+            rows=[
+                {
+                    "product_name": "测试商品",
+                    "forecast_start": "2026-09-01",
+                    "forecast_end": "2026-09-30",
+                    "forecast_units": 120,
+                    "recommended_restock": 30,
+                }
+            ],
             row_count=1,
             elapsed_ms=1,
             error=None,
@@ -204,8 +214,29 @@ def test_agent_graph_routes_inventory_plan_without_asking_llm_for_sql():
     )
 
     assert gateway.calls == 0
+    assert gateway.summary_calls == 0
     assert result["intent"] == "inventory_planning"
     assert result["query_spec"]["capability"] == "inventory_forecast"
     assert "match_capability:inventory_forecast" in result["trace"]
     assert "plan_capability:inventory_forecast" in result["trace"]
+    assert "summarize_result:deterministic_capability" in result["trace"]
+    assert "2026-09-01 至 2026-09-30" in result["answer"]
+    assert "建议补货合计约 30 件" in result["answer"]
     assert result["row_count"] == 1
+
+
+def test_agent_graph_replaces_truncated_model_summary_with_fallback():
+    class TruncatedSummaryGateway(StubGateway):
+        def summarize(self, question, intent, plan, columns, rows, language):
+            self.summary_calls += 1
+            return LLMResult(text="下月（", configured=True)
+
+    gateway = TruncatedSummaryGateway()
+    result = build_agent_graph(gateway, sql_runner=stub_sql_runner).invoke(
+        {"question": "近 30 天销售额多少？", "trace": []}
+    )
+
+    assert gateway.summary_calls == 1
+    assert result["answer"] != "下月（"
+    assert "销售额" in result["answer"]
+    assert "summarize_result:fallback_invalid" in result["trace"]

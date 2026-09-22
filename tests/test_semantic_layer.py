@@ -4,7 +4,7 @@ import psycopg
 import pytest
 
 from ecommerce_agent.config import Settings
-from ecommerce_agent.answering import build_fallback_analysis
+from ecommerce_agent.answering import build_fallback_analysis, is_usable_analysis
 from ecommerce_agent.semantic import build_query_spec, validate_sql_semantics
 from ecommerce_agent.sql_tool import execute_sql
 from ecommerce_agent.text_to_sql import fallback_sql_plan, parse_sql_plan
@@ -192,6 +192,15 @@ def test_fallback_summary_reads_generic_result_columns_without_zero_placeholders
     assert "0.00" not in sales_answer
     assert "测试商品" in product_answer
     assert "None" not in product_answer
+
+
+@pytest.mark.parametrize("text", ["下月（", "这是一段长度足够但括号没有闭合的分析（", "主要商品包括"])
+def test_analysis_quality_gate_rejects_incomplete_text(text):
+    assert is_usable_analysis(text, "zh") is False
+
+
+def test_analysis_quality_gate_accepts_complete_text():
+    assert is_usable_analysis("下月预计需要补货 179 件，建议优先复核头部商品的在途库存。", "zh") is True
 
 
 def test_product_repurchase_query_executes_when_postgres_is_available():
