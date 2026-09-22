@@ -289,6 +289,7 @@ CREATE TABLE dim_region (
 - [x] 结构化多轮槽位继承 + 环比/同比贡献度拆解
 - [x] 开放能力注册与任务路由 + 商品库存预测
 - [x] 多预测周期槽位（周/月/季度/年/滚动 N 天）+ 前端请求锁自动恢复
+- [x] 确定性预测结论 + 模型总结完整性校验与自动回退
 
 #### Phase 3 开发记录（2026-09-16）
 
@@ -300,6 +301,7 @@ CREATE TABLE dim_region (
 - `src/ecommerce_agent/conversation.py`：每轮保存结构化 QuerySpec，识别省略指标的贡献/拆解类追问并继承上一轮口径。
 - `src/ecommerce_agent/capabilities.py`：开放任务到能力的注册与匹配；控制跨任务上下文是否兼容，未注册能力显式兜底。
 - `src/ecommerce_agent/semantic.py`：新增库存预测编译器，按最近 90 天逐日销量趋势、指定未来周期需求、7 天安全库存和当前库存计算补货建议。
+- `src/ecommerce_agent/answering.py`：为模型总结增加最小长度、括号配对和悬空结尾校验；预测结果使用基于真实结果行的确定性完整结论。
 - `apps/web/components/AgentDashboard.tsx`：请求锁与持久化历史解耦，统一处理成功、失败、中止和超时后的按钮恢复。
 - `src/ecommerce_agent/agent.py`：在 SQL 生成与执行之间新增语义校验节点，错误反馈进入有限 ReAct 修复回路。
 - `src/ecommerce_agent/audit.py`：脱敏 JSONL 审计日志。
@@ -308,7 +310,7 @@ CREATE TABLE dim_region (
 - `phase3-development-log.md`：记录难点、解决办法和验收限制。
 
 **当前验收状态**
-- `uv run pytest -q`：50 passed，1 warning；包含真实 PostgreSQL 连接、商品复购率、商品 GMV 贡献和多预测周期库存查询测试。
+- `uv run pytest -q`：55 passed，1 warning；包含真实 PostgreSQL 连接、商品复购率、商品 GMV 贡献、多预测周期库存查询和总结截断回退测试。
 - `uv run python -m compileall -q src scripts apps`：通过。
 - `npm run typecheck` / `npm run build`：通过，首页完成静态预渲染。
 - SQL 安全校验新增跨 schema、危险函数、控制字符和长度限制；API 支持 JSON 与 SSE 两种调用方式。
@@ -317,6 +319,7 @@ CREATE TABLE dim_region (
 - 结构化追问验证：首轮“近 30 天销售额多少？环比上个月呢？”，追问“主要贡献来源是什么商品”；真实 DeepSeek + PostgreSQL 返回商品本期/上期 GMV、增量、增幅与贡献占比，未触发多余澄清。
 - 能力切换验证：商品 GMV 贡献会话后提出“按照趋势下个月各种商品应该准备多少库存量”，不继承旧 GMV 口径，进入 `inventory_forecast` 并输出预测需求、当前库存、安全库存、目标库存和建议补货量。
 - 季度预测验证：“下季度各商品应该准备多少库存”解析为 `next_calendar_quarter`，真实 DeepSeek + PostgreSQL 返回下一自然季度补货清单；前端 SSE 正常结束并释放操作按钮。
+- 结论完整性验证：“下月各商品应该准备多少库存”返回 202 字的确定性结论、5 个补货行动项和合计 179 件；残句“下月（”的回归用例会被拒绝并自动切换到数据驱动结论。
 - 详细问题记录见 `phase3-development-log.md`。
 
 ### Phase 4：打磨与简历（第 8 周）

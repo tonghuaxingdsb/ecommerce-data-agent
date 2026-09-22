@@ -23,6 +23,7 @@
 - 库存规划能力：使用最近 90 天逐日 paid 销量的线性趋势预测指定未来周期，按 7 天安全库存和当前库存计算建议补货量，只返回补货量大于 0 的行动项。
 - 预测周期槽位：库存规划支持下周、下月、下季度、明年以及“未来 N 天/周/月”；编译器按数据最大日期生成对应自然周期或滚动周期边界。
 - 前端请求锁恢复：按钮禁用状态只绑定当前标签页的真实请求，不再扫描持久化历史；成功、失败、手动停止和 120 秒超时都会释放。
+- 分析结论完整性保障：库存预测直接从已执行结果生成确定性结论；其他模型总结先检查长度、括号配对和悬空结尾，无效时自动回退到数据驱动摘要。
 
 ## 痛点、难点与解决办法
 
@@ -65,10 +66,12 @@
 | “下季度各商品应该准备多少库存”不含旧规则中的“下月/未来”，因此未命中预测能力并回落到指标澄清 | 将预测周期独立为 `forecast_horizon` 槽位，统一识别自然周/月/季度/年和滚动 N 天，不再靠少量时间关键词决定能力 |
 | 历史轮次残留 `running=true` 会把所有前端按钮锁死 | 使用仅存在于当前挂载标签页的 `activeRequest` 作为请求锁；持久化轮次仅用于展示，不能控制交互状态 |
 | SSE 或后端异常可能让按钮长期停留在运行态 | 为请求增加 120 秒超时，统一在 `finally` 中清除计时器、AbortController、轮次 running 状态和活动请求锁 |
+| DeepSeek 偶发返回“下月（”这类非空残句，旧流程只检查是否有文本并误判为成功 | 引入总结质量门：检查最小长度、未闭合括号、悬空标点和“包括/如下”等未完成结尾；不合格时使用查询结果生成完整回退结论 |
+| 库存预测数字已经由确定性 SQL 得出，再交给模型改写会增加截断或数字漂移风险 | `inventory_forecast` 跳过二次模型总结，直接输出预测区间、补货商品数、总量、Top3 和基线假设；trace 标记为 `summarize_result:deterministic_capability` |
 
 ## 验证结果
 
-- `uv run pytest -q`：50 passed，1 warning（FastAPI 测试客户端依赖的上游弃用提示）；包含真实 PostgreSQL 商品复购率、GMV 贡献和多周期库存预测查询。
+- `uv run pytest -q`：55 passed，1 warning（FastAPI 测试客户端依赖的上游弃用提示）；包含真实 PostgreSQL 商品复购率、GMV 贡献、多周期库存预测查询，以及模型残句拒绝和确定性预测结论测试。
 - `uv run python -m compileall -q src scripts apps`：通过。
 - `npm run typecheck` 与 `npm run build`：通过；Next.js 16.3.5 成功生成静态首页。
 - SSE、provider 选择、SQL 跨 schema/长度约束、审计脱敏均有自动化测试。
@@ -81,4 +84,5 @@
 - 真实 DeepSeek + PostgreSQL 两轮接口验证：首轮“近 30 天销售额多少？环比上个月呢？”，次轮“主要贡献来源是什么商品”；第二轮继承 `gmv + 近 30 天 + mom`，返回 10 行 `current_gmv/previous_gmv/gmv_change/change_pct/contribution_pct`，无澄清、SQL 错误或语义错误。
 - 真实上下文切换验证：首轮为“近30天各商品GMV环比贡献”，次轮为“按照趋势下个月各种商品应该准备多少库存量”；第二轮显示 `inherited=False` 并进入 `inventory_forecast`，返回 2026-09-01 至 2026-09-30 的 5 个补货行动项、合计 179 件，无 SQL 或语义错误。
 - 截图原句真实 API 验证：“下季度各商品应该准备多少库存”进入 `inventory_forecast + next_calendar_quarter`，返回 2026-10-01 至 2026-12-31 的 22 个补货行动项、合计 3,234 件；SSE 返回 7 个 trace、最终 result 并在约 24 秒正常关闭。
+- 截图原句真实 API 验证：“下月各商品应该准备多少库存”进入 `inventory_forecast + next_calendar_month`，不到 1 秒返回 202 字完整结论、2026-09-01 至 2026-09-30 的 5 个补货行动项和合计 179 件；总结节点为确定性 formatter，不再调用 DeepSeek 二次改写。
 - 前端 `npm run typecheck` 和 `npm run build`：通过；生产服务已重新构建并监听 `127.0.0.1:3000`。
