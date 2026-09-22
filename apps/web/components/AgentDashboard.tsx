@@ -5,11 +5,12 @@ import { streamAgentQuery } from "@/lib/api";
 import type { AgentResult, AgentStreamEvent, Scalar } from "@/lib/types";
 import { ResultChart } from "./ResultChart";
 
-const EXAMPLES = ["近 30 天销售额多少？环比上个月呢？", "Top10 商品是哪些？", "华东区老客复购率怎么样？", "近 30 天每日销售趋势"];
+const EXAMPLES = ["近 30 天销售额多少？环比上个月呢？", "Top10 商品是哪些？", "华东区老客复购率怎么样？", "近 30 天每日销售趋势", "下季度各商品应该准备多少库存"];
 const STORAGE_KEY = "commerce-lens-conversations-v1";
 const ACTIVE_CONVERSATION_KEY = "commerce-lens-active-conversation-v1";
 const MAX_CONVERSATIONS = 20;
 const MAX_TURNS = 50;
+const REQUEST_TIMEOUT_MS = 120_000;
 const NODE_LABELS: Record<string, string> = {
   classify_intent: "识别意图",
   prepare_context: "检索口径",
@@ -39,11 +40,17 @@ interface Conversation {
   updatedAt: number;
 }
 
+interface ActiveRequest {
+  conversationId: string;
+  turnId: string;
+}
+
 export function AgentDashboard() {
   const [question, setQuestion] = useState(EXAMPLES[0]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState("");
   const [hydrated, setHydrated] = useState(false);
+  const [activeRequest, setActiveRequest] = useState<ActiveRequest | null>(null);
   const abortController = useRef<AbortController | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const stickToLatest = useRef(true);
@@ -84,7 +91,9 @@ export function AgentDashboard() {
     () => conversations.find((conversation) => conversation.id === activeConversationId) ?? null,
     [activeConversationId, conversations],
   );
-  const running = conversations.some((conversation) => conversation.turns.some((turn) => turn.running));
+  // Persisted turns are display history, not a reliable request lock. Only a
+  // request owned by this mounted tab may disable actions.
+  const running = activeRequest !== null;
 
   useEffect(() => {
     if (!activeConversation) return;
@@ -110,7 +119,7 @@ export function AgentDashboard() {
   async function submit(event?: FormEvent) {
     event?.preventDefault();
     const normalized = question.trim();
-    if (!normalized || running || !activeConversation) return;
+    if (!normalized || running || abortController.current || !activeConversation) return;
 
     const conversationId = activeConversation.id;
     const turnId = crypto.randomUUID();
@@ -127,25 +136,35 @@ export function AgentDashboard() {
     stickToLatest.current = false;
     appendTurn(conversationId, turn);
     setQuestion("");
-    abortController.current = new AbortController();
+    const controller = new AbortController();
+    let timedOut = false;
+    abortController.current = controller;
+    setActiveRequest({ conversationId, turnId });
+    const timeoutId = window.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, REQUEST_TIMEOUT_MS);
 
     try {
       await streamAgentQuery(
         normalized,
         conversationId,
         (streamEvent) => handleEvent(conversationId, turnId, streamEvent),
-        abortController.current.signal,
+        controller.signal,
       );
     } catch (caught) {
-      if ((caught as Error).name !== "AbortError") {
-        updateTurn(conversationId, turnId, (current) => ({
-          ...current,
-          error: caught instanceof Error ? caught.message : "分析失败，请稍后重试。",
-        }));
-      }
+      const aborted = (caught as Error).name === "AbortError";
+      const message = timedOut
+        ? "分析超过 120 秒，已自动停止。请稍后重试或缩小查询范围。"
+        : aborted
+          ? "分析已停止，可以修改问题后重新提交。"
+          : caught instanceof Error ? caught.message : "分析失败，请稍后重试。";
+      updateTurn(conversationId, turnId, (current) => ({ ...current, error: message }));
     } finally {
+      window.clearTimeout(timeoutId);
       updateTurn(conversationId, turnId, (current) => ({ ...current, running: false }));
-      abortController.current = null;
+      if (abortController.current === controller) abortController.current = null;
+      setActiveRequest((current) => current?.turnId === turnId ? null : current);
     }
   }
 
@@ -284,12 +303,12 @@ export function AgentDashboard() {
           </div>
           <div className="capability-card">
             <span className="capability-icon">✦</span>
-            <div><strong>安全数据查询</strong><p>只读 SQL · 指标口径 RAG · 自动纠错</p></div>
+            <div><strong>分析与预测</strong><p>只读 SQL · 指标口径 RAG · 趋势预测 · 自动纠错</p></div>
           </div>
         </aside>
 
         <section className="workspace">
-          <form className="query-card" onSubmit={submit}>
+          <form className="query-card" onSubmit={submit} aria-busy={running}>
             <div className="query-label"><span>分析问题</span><small>{question.length}/2000</small></div>
             <textarea
               aria-label="分析问题"
@@ -309,7 +328,7 @@ export function AgentDashboard() {
               <span>↵ Enter 提交 · 支持多轮追问</span>
               {running
                 ? <button type="button" className="stop-button" onClick={() => abortController.current?.abort()}>停止</button>
-                : <button type="submit" className="run-button" disabled={!hydrated || !activeConversation}>开始分析 <i>→</i></button>}
+                : <button type="submit" className="run-button" disabled={!hydrated || !activeConversation || !question.trim()}>开始分析 <i>→</i></button>}
             </div>
           </form>
 

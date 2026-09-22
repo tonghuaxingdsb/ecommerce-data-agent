@@ -173,7 +173,7 @@ def build_query_spec(
             task_type=capability.task_type,
             capability=capability.capability,
             training_window_days=90,
-            forecast_horizon="next_calendar_month",
+            forecast_horizon=capability.forecast_horizon or "next_30_days",
             safety_stock_days=7,
             assumptions=(
                 "使用最近 90 天逐日 paid 销量的线性趋势作为基线预测",
@@ -358,11 +358,13 @@ def extract_area_filter(question: str) -> str | None:
 def _compile_inventory_forecast_query(spec: QuerySpec) -> CompiledQuery:
     training_days = spec.training_window_days or 90
     safety_days = spec.safety_stock_days or 7
+    forecast_start_sql, forecast_end_sql = _forecast_period_expressions(spec.forecast_horizon)
+    horizon_label = _forecast_horizon_label(spec.forecast_horizon)
     sql = f"""
 WITH bounds AS (
   SELECT max(order_date)::date AS end_date,
-         (date_trunc('month', max(order_date)) + INTERVAL '1 month')::date AS forecast_start,
-         (date_trunc('month', max(order_date)) + INTERVAL '2 months' - INTERVAL '1 day')::date AS forecast_end
+         {forecast_start_sql} AS forecast_start,
+         {forecast_end_sql} AS forecast_end
   FROM fact_orders
 ), product_days AS (
   SELECT p.product_id,
@@ -444,13 +446,55 @@ ORDER BY recommended_restock DESC, forecast_units DESC, product_name
     return CompiledQuery(
         sql=sql,
         summary=(
-            f"使用最近 {training_days} 天逐日 paid 销量趋势预测下个自然月各商品需求，"
+            f"使用最近 {training_days} 天逐日 paid 销量趋势预测{horizon_label}各商品需求，"
             f"并按 {safety_days} 天安全库存减去当前库存计算建议补货量，仅列出建议补货量大于 0 的商品。"
         ),
         chart_type="bar",
         chart_x="product_name",
         chart_y="recommended_restock",
     )
+
+
+def _forecast_period_expressions(horizon: str | None) -> tuple[str, str]:
+    calendar_periods = {
+        "next_calendar_week": (
+            "(date_trunc('week', max(order_date)) + INTERVAL '1 week')::date",
+            "(date_trunc('week', max(order_date)) + INTERVAL '2 weeks' - INTERVAL '1 day')::date",
+        ),
+        "next_calendar_month": (
+            "(date_trunc('month', max(order_date)) + INTERVAL '1 month')::date",
+            "(date_trunc('month', max(order_date)) + INTERVAL '2 months' - INTERVAL '1 day')::date",
+        ),
+        "next_calendar_quarter": (
+            "(date_trunc('quarter', max(order_date)) + INTERVAL '3 months')::date",
+            "(date_trunc('quarter', max(order_date)) + INTERVAL '6 months' - INTERVAL '1 day')::date",
+        ),
+        "next_calendar_year": (
+            "(date_trunc('year', max(order_date)) + INTERVAL '1 year')::date",
+            "(date_trunc('year', max(order_date)) + INTERVAL '2 years' - INTERVAL '1 day')::date",
+        ),
+    }
+    if horizon in calendar_periods:
+        return calendar_periods[horizon]
+    matched = re.fullmatch(r"next_(\d+)_days", horizon or "")
+    days = max(1, min(int(matched.group(1)), 366)) if matched else 30
+    return (
+        "(max(order_date) + INTERVAL '1 day')::date",
+        f"(max(order_date) + INTERVAL '{days} days')::date",
+    )
+
+
+def _forecast_horizon_label(horizon: str | None) -> str:
+    labels = {
+        "next_calendar_week": "下个自然周",
+        "next_calendar_month": "下个自然月",
+        "next_calendar_quarter": "下个自然季度",
+        "next_calendar_year": "下个自然年",
+    }
+    if horizon in labels:
+        return labels[horizon]
+    matched = re.fullmatch(r"next_(\d+)_days", horizon or "")
+    return f"未来 {matched.group(1)} 天" if matched else "未来 30 天"
 
 
 def _compile_additive_query(spec: QuerySpec, question: str) -> CompiledQuery:

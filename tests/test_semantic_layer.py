@@ -122,6 +122,20 @@ def test_unregistered_forecast_does_not_fall_back_to_gmv():
     assert "当前仅注册" in plan.clarifying_question
 
 
+def test_inventory_planning_compiles_next_calendar_quarter():
+    question = "下季度各商品应该准备多少库存"
+
+    plan = fallback_sql_plan(question, "inventory_planning")
+
+    assert plan.needs_clarification is False
+    assert plan.query_spec["capability"] == "inventory_forecast"
+    assert plan.query_spec["forecast_horizon"] == "next_calendar_quarter"
+    assert "date_trunc('quarter', max(order_date))" in plan.candidate_sql
+    assert "INTERVAL '3 months'" in plan.candidate_sql
+    assert "INTERVAL '6 months'" in plan.candidate_sql
+    assert "下个自然季度" in plan.summary
+
+
 def test_product_contribution_follow_up_inherits_metric_time_and_comparison():
     # Use the exact tuple-based representation stored by ConversationTurn.
     inherited = build_query_spec("近 30 天销售额多少？环比上个月呢？").to_dict()
@@ -231,7 +245,7 @@ def test_inventory_forecast_executes_when_postgres_is_available():
     except psycopg.OperationalError:
         pytest.skip("PostgreSQL is not available.")
 
-    plan = fallback_sql_plan("按照趋势下个月各种商品应该准备多少库存量", "inventory_planning")
+    plan = fallback_sql_plan("下季度各商品应该准备多少库存", "inventory_planning")
     result = execute_sql(
         plan.candidate_sql,
         settings=Settings(database_url=DATABASE_URL, sql_max_rows=200, sql_timeout_ms=5000),
@@ -251,4 +265,6 @@ def test_inventory_forecast_executes_when_postgres_is_available():
         "recommended_restock",
     ]
     assert result.row_count > 0
+    assert result.rows[0]["forecast_start"] == "2026-10-01"
+    assert result.rows[0]["forecast_end"] == "2026-12-31"
     assert result.rows[0]["recommended_restock"] >= result.rows[-1]["recommended_restock"]

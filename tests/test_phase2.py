@@ -97,6 +97,16 @@ def test_inventory_planning_is_a_fresh_capability_not_a_follow_up():
     assert resolve_follow_up(question, history) == question
 
 
+def test_inventory_planning_recognizes_quarter_and_rolling_horizons():
+    quarter = match_capability("下季度各商品应该准备多少库存")
+    rolling = match_capability("未来45天各商品需要补货多少")
+
+    assert quarter.capability == "inventory_forecast"
+    assert quarter.forecast_horizon == "next_calendar_quarter"
+    assert rolling.capability == "inventory_forecast"
+    assert rolling.forecast_horizon == "next_45_days"
+
+
 def test_single_character_gai_does_not_make_yinggai_a_follow_up():
     history = [ConversationTurn(question="近 30 天销售额多少？")]
 
