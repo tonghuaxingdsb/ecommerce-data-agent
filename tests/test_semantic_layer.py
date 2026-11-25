@@ -272,7 +272,12 @@ def test_inventory_forecast_executes_when_postgres_is_available():
     try:
         with psycopg.connect(DATABASE_URL, connect_timeout=1) as connection:
             with connection.cursor() as cursor:
-                cursor.execute("SELECT 1")
+                cursor.execute("""
+                    SELECT (date_trunc('quarter', max(order_date)) + INTERVAL '3 months')::date,
+                           (date_trunc('quarter', max(order_date)) + INTERVAL '6 months - 1 day')::date
+                    FROM fact_orders
+                """)
+                expected_start, expected_end = cursor.fetchone()
     except psycopg.OperationalError:
         pytest.skip("PostgreSQL is not available.")
 
@@ -296,6 +301,6 @@ def test_inventory_forecast_executes_when_postgres_is_available():
         "recommended_restock",
     ]
     assert result.row_count > 0
-    assert result.rows[0]["forecast_start"] == "2026-10-01"
-    assert result.rows[0]["forecast_end"] == "2026-12-31"
+    assert result.rows[0]["forecast_start"] == expected_start.isoformat()
+    assert result.rows[0]["forecast_end"] == expected_end.isoformat()
     assert result.rows[0]["recommended_restock"] >= result.rows[-1]["recommended_restock"]

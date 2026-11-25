@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 
 from ecommerce_agent.conversation import is_ambiguous_metric_question
-from ecommerce_agent.semantic import QuerySpec, build_query_spec, compile_query_spec, extract_area_filter
-from ecommerce_agent.time_intelligence import build_sales_overview_sql
+from ecommerce_agent.dimension_filters import DIMENSION_FILTER_COLUMNS
+from ecommerce_agent.semantic import USER_METRICS, QuerySpec, build_query_spec, compile_query_spec
+from ecommerce_agent.time_intelligence import build_sales_overview_sql, campaign_match, parse_time_intent
 
 
 FEW_SHOTS = """
@@ -84,8 +85,20 @@ def parse_sql_plan(
 
     raw_spec = payload.get("query_spec") if isinstance(payload.get("query_spec"), dict) else {}
     spec = build_query_spec(question, raw_spec, inherited=inherited_query_spec)
+    if overview_plan := _plan_sales_comparison(spec, question):
+        return overview_plan
     candidate_sql = str(payload.get("candidate_sql") or "")
-    force_compiled = spec.analysis_type == "contribution" or spec.capability != "semantic_sql" or spec.dimensions == ("order_date",)
+    force_compiled = (
+        spec.analysis_type == "contribution"
+        or spec.capability != "semantic_sql"
+        or spec.dimensions == ("order_date",)
+        or "order_month" in spec.dimensions
+        or any(item.field in DIMENSION_FILTER_COLUMNS for item in spec.filters)
+        or campaign_match(spec.time_range or "")
+        or USER_METRICS.intersection(spec.metrics)
+        or "refunded_orders" in spec.metrics
+        or ("units" in spec.metrics and "product" in spec.dimensions and spec.sort_by == "units")
+    )
     compiled = compile_query_spec(spec, question) if not candidate_sql or force_compiled else None
     return SQLPlan(
         intent=_intent_from_spec(spec, str(payload.get("intent") or default_intent)),
@@ -176,19 +189,8 @@ LIMIT 10
             query_spec=spec.to_dict(),
         )
 
-    normalized = question.lower()
-    if not spec.dimensions and spec.metrics == ("gmv",) and any(token in normalized for token in ("同比", "环比", "对比", "相比", "增长", "变化")):
-        area_filter = extract_area_filter(question)
-        sql, time_intent = build_sales_overview_sql(question, area_filter=area_filter)
-        comparison_label = "去年同期" if time_intent.comparison == "yoy" else "前一周期"
-        return SQLPlan(
-            intent="sales_overview",
-            analysis_plan=default_steps(),
-            candidate_sql=sql,
-            summary=f"对比{time_intent.label}与{comparison_label}的 paid GMV、订单量、销量和客单价。",
-            chart_type="table",
-            query_spec=spec.to_dict(),
-        )
+    if overview_plan := _plan_sales_comparison(spec, question):
+        return overview_plan
 
     compiled = compile_query_spec(spec, question)
     return SQLPlan(
@@ -200,6 +202,28 @@ LIMIT 10
         chart_x=compiled.chart_x,
         chart_y=compiled.chart_y,
         query_spec=spec.to_dict(),
+    )
+
+
+def _plan_sales_comparison(spec: QuerySpec, question: str) -> SQLPlan | None:
+    if spec.needs_clarification or spec.capability != "semantic_sql" or spec.dimensions or spec.metrics != ("gmv",):
+        return None
+    question_time = parse_time_intent(question)
+    comparison = question_time.comparison or spec.comparison
+    if comparison is None:
+        return None
+    period = parse_time_intent(spec.time_range) if spec.time_range else question_time
+    time_intent = replace(period, comparison=comparison)
+    dimension_filters = {item.field: item.value for item in spec.filters if item.operator == "="}
+    sql, _ = build_sales_overview_sql(question, time_intent=time_intent, dimension_filters=dimension_filters)
+    comparison_label = "去年同期" if comparison == "yoy" else "前一周期"
+    return SQLPlan(
+        intent="sales_overview",
+        analysis_plan=default_steps(),
+        candidate_sql=sql,
+        summary=f"对比{time_intent.label}与{comparison_label}的已支付订单销售额、订单量、销量和客单价。",
+        chart_type="table",
+        query_spec=replace(spec, comparison=comparison).to_dict(),
     )
 
 
@@ -216,8 +240,10 @@ def _intent_from_spec(spec: QuerySpec, default: str) -> str:
         return "product_analysis"
     if "channel" in spec.dimensions:
         return "channel_analysis"
-    if "repurchase_rate" in spec.metrics or "vip_level" in spec.dimensions:
+    if "repurchase_rate" in spec.metrics or USER_METRICS.intersection(spec.metrics) or "vip_level" in spec.dimensions:
         return "user_analysis"
-    if "order_date" in spec.dimensions or any(metric in spec.metrics for metric in ("gmv", "orders", "units", "avg_order_value")):
+    if {"order_date", "order_month"}.intersection(spec.dimensions) or any(
+        metric in spec.metrics for metric in ("gmv", "orders", "units", "avg_order_value", "refunded_orders")
+    ):
         return "sales_overview"
     return default

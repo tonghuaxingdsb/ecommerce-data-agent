@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+from math import isfinite
 from typing import Any
 
-from ecommerce_agent.semantic import DIMENSION_RESULT_COLUMNS, METRIC_RESULT_COLUMNS, SUPPORTED_DIMENSIONS, SUPPORTED_METRICS, build_query_spec
-from ecommerce_agent.time_intelligence import parse_time_intent
+from ecommerce_agent.semantic import DIMENSION_RESULT_COLUMNS, METRIC_RESULT_COLUMNS, SUPPORTED_DIMENSIONS, SUPPORTED_METRICS, USER_METRICS, QuerySpec, build_query_spec
+from ecommerce_agent.time_intelligence import campaign_match, parse_time_intent
 
 
-def build_fallback_analysis(question: str, intent: str, rows: list[dict[str, Any]], language: str) -> str:
+def build_fallback_analysis(
+    question: str, intent: str, rows: list[dict[str, Any]], language: str, query_spec: dict[str, Any] | None = None
+) -> str:
     if language == "zh":
-        return build_chinese_analysis(question, intent, rows)
+        return build_chinese_analysis(question, intent, rows, query_spec)
     return build_english_analysis(question, intent, rows)
 
 
@@ -26,14 +29,18 @@ def is_usable_analysis(text: str, language: str) -> bool:
     return not stripped.endswith(incomplete_endings)
 
 
-def build_chinese_analysis(question: str, intent: str, rows: list[dict[str, Any]]) -> str:
+def build_chinese_analysis(
+    question: str, intent: str, rows: list[dict[str, Any]], query_spec: dict[str, Any] | None = None
+) -> str:
+    spec = build_query_spec(question, query_spec)
     if not rows:
+        if campaign_match(spec.time_range or ""):
+            return f"现有数据在{spec.time_range}当天未返回符合查询条件的记录。"
         if intent == "inventory_planning":
             return "按当前趋势预测和安全库存假设，没有商品需要补货。建议仍结合在途库存、采购提前期和活动计划复核。"
         return "这次查询没有返回数据。建议先放宽时间范围或确认筛选条件是否过窄。"
 
     first = rows[0]
-    spec = build_query_spec(question)
     if "recommended_restock" in first:
         total_restock = sum(number_or_zero(row.get("recommended_restock")) for row in rows)
         top_rows = [row for row in rows if number_or_zero(row.get("recommended_restock")) > 0][:3]
@@ -61,6 +68,24 @@ def build_chinese_analysis(question: str, intent: str, rows: list[dict[str, Any]
                 f"增量 {format_money(change)}，占整体净增量约 {number_or_zero(first.get('contribution_pct')):.2f}%。"
                 f"增量 Top3 为 {top_names}；建议同时关注负贡献项，区分增长来源与下滑拖累。"
             )
+    if "order_month" in first and not any(
+        column in first for dimension, column in DIMENSION_RESULT_COLUMNS.items() if dimension != "order_month"
+    ):
+        metrics = spec.metrics or tuple(metric for metric, column in METRIC_RESULT_COLUMNS.items() if column in first)
+        if metrics:
+            metric = metrics[0]
+            metric_column = METRIC_RESULT_COLUMNS[metric]
+            peak = max(rows, key=lambda row: number_or_zero(row.get(metric_column)))
+            period = spec.time_range or "所查询周期"
+            monthly_summary = f"{period}共返回 {len(rows)} 个月的{SUPPORTED_METRICS[metric]}数据。"
+            if metric in {"gmv", "orders", "units"}:
+                total = sum(number_or_zero(row.get(metric_column)) for row in rows)
+                monthly_summary = f"{period}累计{SUPPORTED_METRICS[metric]}为 {format_metric_value(metric, total)}。"
+            return (
+                monthly_summary
+                + f"峰值出现在 {str(peak['order_month'])[:7]}，当月指标值为 {format_metric_value(metric, peak.get(metric_column))}。"
+            )
+
     if "order_date" in first and spec.metrics:
         metric = spec.metrics[0]
         metric_column = METRIC_RESULT_COLUMNS[metric]
@@ -91,21 +116,7 @@ def build_chinese_analysis(question: str, intent: str, rows: list[dict[str, Any]
         )
 
     if intent == "sales_overview" and "current_gmv" in first:
-        time_intent = parse_time_intent(question)
-        current_gmv = format_money(first.get("current_gmv"))
-        previous_gmv = format_money(first.get("previous_gmv"))
-        current_orders = format_int(first.get("current_orders"))
-        current_units = format_int(first.get("current_units"))
-        mom = first.get("change_pct", first.get("gmv_mom_pct"))
-        aov = format_money(first.get("current_avg_order_value"))
-        direction = "增长" if number_or_zero(mom) >= 0 else "下降"
-        comparison_label = "同比" if time_intent.comparison == "yoy" else "环比"
-        comparison_period = "去年同期" if time_intent.comparison == "yoy" else "前一周期"
-        return (
-            f"{time_intent.label}销售额为 {current_gmv}，{comparison_period}为 {previous_gmv}，{comparison_label}{direction} {abs(number_or_zero(mom)):.2f}%。"
-            f"同期订单量为 {current_orders} 单，销量 {current_units} 件，客单价约 {aov}。"
-            "整体看，本期销售表现较上一周期更强，可以继续拆到渠道或商品类目看主要贡献来源。"
-        )
+        return _build_chinese_sales_overview(question, first, spec)
 
     primary_metric = spec.metrics[0] if spec.metrics else None
     primary_dimension = spec.dimensions[0] if spec.dimensions else None
@@ -113,6 +124,11 @@ def build_chinese_analysis(question: str, intent: str, rows: list[dict[str, Any]
         metric_column = METRIC_RESULT_COLUMNS.get(primary_metric)
         dimension_column = DIMENSION_RESULT_COLUMNS.get(primary_dimension)
         if metric_column in first and dimension_column in first:
+            if primary_dimension == "vip_level" and primary_metric in USER_METRICS and "分布" in question:
+                distribution = "、".join(
+                    f"{row[dimension_column]} {format_int(row[metric_column])} 人" for row in rows
+                )
+                return f"按会员等级统计的{SUPPORTED_METRICS[primary_metric]}为 {distribution}。"
             direction = "最高" if spec.sort_direction == "desc" else "最低"
             return (
                 f"按{SUPPORTED_METRICS[primary_metric]}看，{SUPPORTED_DIMENSIONS[primary_dimension]}"
@@ -167,6 +183,53 @@ def build_chinese_analysis(question: str, intent: str, rows: list[dict[str, Any]
         )
 
     return f"已根据问题「{question}」完成查询，共返回 {len(rows)} 行结果。建议查看结果表中的头部项，并继续按时间、地区或渠道做拆分。"
+
+
+def _build_chinese_sales_overview(question: str, row: dict[str, Any], spec: QuerySpec) -> str:
+    time_intent = parse_time_intent(spec.time_range or question)
+    comparison = spec.comparison or parse_time_intent(question).comparison
+    current_gmv = _finite_number(row.get("current_gmv"))
+    previous_gmv = _finite_number(row.get("previous_gmv"))
+    change_pct = _finite_number(row.get("change_pct", row.get("gmv_mom_pct")))
+    comparison_label, comparison_period = (
+        ("同比", "去年同期") if comparison == "yoy" else ("环比", "前一周期")
+    )
+    if current_gmv is None:
+        current_summary = f"{time_intent.label}没有可用的销售额数据。"
+    else:
+        current_summary = f"{time_intent.label}销售额为 {format_money(current_gmv)}。"
+    if previous_gmv is None:
+        comparison_summary = f"缺少{comparison_period}的销售额数据，无法计算{comparison_label}。"
+    else:
+        comparison_summary = f"{comparison_period}销售额为 {format_money(previous_gmv)}。"
+        if previous_gmv == 0:
+            comparison_summary += f"比较基数为零，无法计算{comparison_label}。"
+        elif current_gmv is None or change_pct is None:
+            comparison_summary += f"现有数据无法计算{comparison_label}。"
+        elif change_pct == 0:
+            comparison_summary += f"销售额{comparison_label}持平。"
+        else:
+            direction = "增长" if change_pct > 0 else "下降"
+            comparison_summary += f"销售额{comparison_label}{direction} {abs(change_pct):.2f}%。"
+
+    metrics = []
+    for column, label, unit in (("current_orders", "订单量", "单"), ("current_units", "销量", "件")):
+        value = _finite_number(row.get(column))
+        if value is not None:
+            metrics.append(f"{label} {format_int(value)} {unit}")
+    aov = _finite_number(row.get("current_avg_order_value"))
+    if aov is not None:
+        metrics.append(f"客单价约 {format_money(aov)}")
+    metrics_summary = f"本期{'，'.join(metrics)}。" if metrics else ""
+    return current_summary + comparison_summary + metrics_summary
+
+
+def _finite_number(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if isfinite(number) else None
 
 
 def build_english_analysis(question: str, intent: str, rows: list[dict[str, Any]]) -> str:
