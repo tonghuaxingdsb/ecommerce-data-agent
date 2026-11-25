@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from ecommerce_agent.dimension_filters import DIMENSION_FILTER_COLUMNS, DIMENSION_FILTER_JOINS, dimension_filter_sql
+
 
 @dataclass(frozen=True)
 class TimeIntent:
@@ -12,6 +14,15 @@ class TimeIntent:
     anchor_sql: str = "(SELECT max(order_date) FROM fact_orders)"
     calendar_period: str | None = None
     period_offset: int = 0
+    campaign_day: tuple[int, int] | None = None
+    campaign_year: int | None = None
+
+
+_CAMPAIGN_PATTERN = re.compile(r"(?:(?P<year>[12]\d{3})年?)?(?P<event>双十一|双11|(?<![\d近])618(?![\d天日]))")
+
+
+def campaign_match(question: str) -> re.Match[str] | None:
+    return _CAMPAIGN_PATTERN.search(question.replace(" ", ""))
 
 
 def parse_time_intent(question: str) -> TimeIntent:
@@ -19,7 +30,17 @@ def parse_time_intent(question: str) -> TimeIntent:
     day_match = re.search(r"(?:近|最近)(\d+)(?:天|日)", text)
     calendar_period: str | None = None
     period_offset = 0
-    if day_match:
+    event = campaign_match(text)
+    campaign_day = None
+    campaign_year = None
+    if event:
+        name = event["event"]
+        campaign_day = (6, 18) if name == "618" else (11, 11)
+        campaign_year = int(event["year"]) if event["year"] else None
+        days, label = 1, "618" if name == "618" else "双十一"
+        if campaign_year:
+            label = f"{campaign_year}年{label}"
+    elif day_match:
         days = max(1, min(int(day_match.group(1)), 366))
         label = f"近 {days} 天"
     elif "上周" in text or "上星期" in text:
@@ -49,22 +70,27 @@ def parse_time_intent(question: str) -> TimeIntent:
         comparison = "mom"
     else:
         comparison = None
-    return TimeIntent(window_days=days, comparison=comparison, label=label, calendar_period=calendar_period, period_offset=period_offset)
+    return TimeIntent(window_days=days, comparison=comparison, label=label, calendar_period=calendar_period, period_offset=period_offset, campaign_day=campaign_day, campaign_year=campaign_year)
 
 
 def build_period_sql(time_intent: TimeIntent) -> str:
     """Return reusable current/comparison predicates anchored to dataset max date."""
-    days = time_intent.window_days
-    current = f"o.order_date BETWEEN end_date - INTERVAL '{days - 1} days' AND end_date"
-    if time_intent.comparison == "yoy":
-        comparison = f"o.order_date BETWEEN end_date - INTERVAL '{days + 364} days' AND end_date - INTERVAL '365 days'"
-    else:
-        comparison = f"o.order_date BETWEEN end_date - INTERVAL '{(days * 2) - 1} days' AND end_date - INTERVAL '{days} days'"
+    current, comparison = build_period_predicates(time_intent)
     return f"current_period: {current}\ncomparison_period: {comparison}"
 
 
 def build_period_predicates(time_intent: TimeIntent, date_column: str = "o.order_date") -> tuple[str, str]:
     """Build current and comparison predicates for reusable dimensional analysis."""
+    if time_intent.campaign_day:
+        month, day = time_intent.campaign_day
+        if time_intent.campaign_year:
+            event_date = f"make_date({time_intent.campaign_year}, {month}, {day})"
+        else:
+            year = "EXTRACT(YEAR FROM end_date)::int"
+            this_year = f"make_date({year}, {month}, {day})"
+            event_date = f"(CASE WHEN {this_year} <= end_date THEN {this_year} ELSE make_date({year} - 1, {month}, {day}) END)"
+        interval = "1 year" if time_intent.comparison == "yoy" else "1 day"
+        return f"{date_column} = {event_date}", f"{date_column} = ({event_date} - INTERVAL '{interval}')::date"
     days = time_intent.window_days
     anchor = "end_date"
     if time_intent.period_offset:
@@ -91,12 +117,22 @@ def build_period_predicates(time_intent: TimeIntent, date_column: str = "o.order
     return current, comparison
 
 
-def build_sales_overview_sql(question: str, *, area_filter: str | None = None) -> tuple[str, TimeIntent]:
-    intent = parse_time_intent(question)
+def build_sales_overview_sql(
+    question: str,
+    *,
+    area_filter: str | None = None,
+    time_intent: TimeIntent | None = None,
+    dimension_filters: dict[str, str] | None = None,
+) -> tuple[str, TimeIntent]:
+    intent = time_intent or parse_time_intent(question)
     current_predicate, comparison_predicate = build_period_predicates(intent)
-    region_join = "JOIN dim_region r ON r.region_id = o.region_id" if area_filter else ""
-    region_where = f"AND r.area = '{area_filter}'" if area_filter else ""
-    comparison_alias = "previous" if intent.comparison != "yoy" else "same_period_last_year"
+    filters = dict(dimension_filters or {})
+    if area_filter:
+        filters["area"] = area_filter
+    filter_joins = "\n  ".join(dict.fromkeys(DIMENSION_FILTER_JOINS[key] for key in filters if key in DIMENSION_FILTER_JOINS))
+    filter_where = "".join(
+        f" AND {dimension_filter_sql(field, value)}" for field, value in filters.items() if field in DIMENSION_FILTER_COLUMNS
+    )
     sql = f"""
 WITH bounds AS (
   SELECT max(order_date) AS end_date FROM fact_orders
@@ -105,20 +141,19 @@ WITH bounds AS (
     SUM(o.amount) FILTER (WHERE {current_predicate}) AS current_gmv,
     COUNT(DISTINCT o.order_id) FILTER (WHERE {current_predicate}) AS current_orders,
     SUM(o.quantity) FILTER (WHERE {current_predicate}) AS current_units,
-    SUM(o.amount) FILTER (WHERE {comparison_predicate}) AS {comparison_alias}_gmv,
-    COUNT(DISTINCT o.order_id) FILTER (WHERE {comparison_predicate}) AS {comparison_alias}_orders,
-    SUM(o.quantity) FILTER (WHERE {comparison_predicate}) AS {comparison_alias}_units
+    SUM(o.amount) FILTER (WHERE {comparison_predicate}) AS previous_gmv,
+    COUNT(DISTINCT o.order_id) FILTER (WHERE {comparison_predicate}) AS previous_orders,
+    SUM(o.quantity) FILTER (WHERE {comparison_predicate}) AS previous_units
   FROM fact_orders o CROSS JOIN bounds
-  {region_join}
-  WHERE o.status = 'paid' {region_where}
+  {filter_joins}
+  WHERE o.status = 'paid'{filter_where}
+), changes AS (
+  SELECT *, ROUND((current_gmv - previous_gmv) / NULLIF(previous_gmv, 0) * 100, 2) AS change_pct
+  FROM periods
 )
-SELECT current_gmv, current_orders, current_units,
-       {comparison_alias}_gmv AS previous_gmv,
-       {comparison_alias}_orders AS previous_orders,
-       {comparison_alias}_units AS previous_units,
-       ROUND((current_gmv - {comparison_alias}_gmv) / NULLIF({comparison_alias}_gmv, 0) * 100, 2) AS change_pct,
-       ROUND((current_gmv - {comparison_alias}_gmv) / NULLIF({comparison_alias}_gmv, 0) * 100, 2) AS gmv_mom_pct,
+SELECT current_gmv, current_orders, current_units, previous_gmv, previous_orders, previous_units,
+       change_pct, change_pct AS gmv_mom_pct,
        ROUND(current_gmv / NULLIF(current_orders, 0), 2) AS current_avg_order_value
-FROM periods
+FROM changes
 """.strip()
     return sql, intent

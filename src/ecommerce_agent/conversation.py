@@ -69,7 +69,7 @@ def is_follow_up_question(
     discourse_markers = ("贡献来源", "主要贡献", "增长贡献", "拉动", "驱动", "原因", "拆解", "细分")
     if any(marker in text for marker in discourse_markers):
         return True
-    explicit_metrics = ("销售额", "gmv", "成交额", "金额", "订单量", "订单数", "销量", "件数", "客单价", "复购率", "复购", "转化率", "利润", "毛利")
+    explicit_metrics = ("销售额", "gmv", "成交额", "金额", "订单量", "订单数", "销量", "件数", "客单价", "复购率", "复购", "转化率", "利润", "毛利", "新增用户", "注册用户", "退款订单", "会员等级分布", "卖得最差", "卖得最少", "卖得最好", "卖得最多")
     if any(metric in text for metric in explicit_metrics):
         return False
     dimensions = ("商品", "货品", "sku", "类目", "品类", "渠道", "地区", "区域", "会员等级")

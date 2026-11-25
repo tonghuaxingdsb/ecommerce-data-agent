@@ -15,6 +15,7 @@ from ecommerce_agent.schema_context import DEFAULT_SCHEMA_CONTEXT, METRIC_CONTEX
 from ecommerce_agent.semantic import build_query_spec, validate_sql_semantics
 from ecommerce_agent.sql_tool import SQLExecutionResult, execute_sql
 from ecommerce_agent.text_to_sql import fallback_sql_plan, parse_sql_plan
+from ecommerce_agent.time_intelligence import campaign_match
 
 
 class AgentState(TypedDict, total=False):
@@ -210,17 +211,27 @@ def build_agent_graph(llm: CompletionGateway | None = None, sql_runner: SQLRunne
 
     def summarize_result(state: AgentState) -> AgentState:
         language = state.get("response_language", "zh")
+        rows = state.get("rows", [])
         fallback_analysis = build_fallback_analysis(
             question=state["question"],
             intent=state["intent"],
-            rows=state.get("rows", []),
+            rows=rows,
             language=language,
+            query_spec=state.get("query_spec"),
         )
         if state.get("capability") == "inventory_forecast":
             return {
                 **state,
                 "natural_language_analysis": fallback_analysis,
                 "trace": [*state.get("trace", []), "summarize_result:deterministic_capability"],
+            }
+        sales_comparison = state["intent"] == "sales_overview" and rows and "current_gmv" in rows[0]
+        time_range = (state.get("query_spec") or {}).get("time_range") or ""
+        if language == "zh" and (sales_comparison or (not rows and campaign_match(time_range))):
+            return {
+                **state,
+                "natural_language_analysis": fallback_analysis,
+                "trace": [*state.get("trace", []), "summarize_result:sales_comparison" if sales_comparison else "summarize_result:empty_campaign"],
             }
         result = gateway.summarize(
             question=state.get("effective_question", state["question"]),
