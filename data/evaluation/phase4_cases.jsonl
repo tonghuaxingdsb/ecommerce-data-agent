@@ -1,0 +1,110 @@
+{"id": "P4-001", "category": "scalar_time", "question": "近7天销售额是多少？", "outcome": "execute", "expected": {"metrics": ["gmv"], "dimensions": [], "time_range": "近 7 天"}}
+{"id": "P4-002", "category": "scalar_time", "question": "近30天销售额是多少？", "outcome": "execute", "expected": {"metrics": ["gmv"], "dimensions": [], "time_range": "近 30 天"}}
+{"id": "P4-003", "category": "scalar_time", "question": "上周销售额是多少？", "outcome": "execute", "expected": {"metrics": ["gmv"], "dimensions": [], "time_range": "上周"}}
+{"id": "P4-004", "category": "scalar_time", "question": "本月销售额是多少？", "outcome": "execute", "expected": {"metrics": ["gmv"], "dimensions": [], "time_range": "本月"}}
+{"id": "P4-005", "category": "scalar_time", "question": "近7天订单量是多少？", "outcome": "execute", "expected": {"metrics": ["orders"], "dimensions": [], "time_range": "近 7 天"}}
+{"id": "P4-006", "category": "scalar_time", "question": "近30天订单量是多少？", "outcome": "execute", "expected": {"metrics": ["orders"], "dimensions": [], "time_range": "近 30 天"}}
+{"id": "P4-007", "category": "scalar_time", "question": "上周订单量是多少？", "outcome": "execute", "expected": {"metrics": ["orders"], "dimensions": [], "time_range": "上周"}}
+{"id": "P4-008", "category": "scalar_time", "question": "本月订单量是多少？", "outcome": "execute", "expected": {"metrics": ["orders"], "dimensions": [], "time_range": "本月"}}
+{"id": "P4-009", "category": "scalar_time", "question": "近7天销量是多少？", "outcome": "execute", "expected": {"metrics": ["units"], "dimensions": [], "time_range": "近 7 天"}}
+{"id": "P4-010", "category": "scalar_time", "question": "近30天销量是多少？", "outcome": "execute", "expected": {"metrics": ["units"], "dimensions": [], "time_range": "近 30 天"}}
+{"id": "P4-011", "category": "scalar_time", "question": "上周销量是多少？", "outcome": "execute", "expected": {"metrics": ["units"], "dimensions": [], "time_range": "上周"}}
+{"id": "P4-012", "category": "scalar_time", "question": "本月销量是多少？", "outcome": "execute", "expected": {"metrics": ["units"], "dimensions": [], "time_range": "本月"}}
+{"id": "P4-013", "category": "scalar_time", "question": "近7天客单价是多少？", "outcome": "execute", "expected": {"metrics": ["avg_order_value"], "dimensions": [], "time_range": "近 7 天"}}
+{"id": "P4-014", "category": "scalar_time", "question": "近30天客单价是多少？", "outcome": "execute", "expected": {"metrics": ["avg_order_value"], "dimensions": [], "time_range": "近 30 天"}}
+{"id": "P4-015", "category": "scalar_time", "question": "上周客单价是多少？", "outcome": "execute", "expected": {"metrics": ["avg_order_value"], "dimensions": [], "time_range": "上周"}}
+{"id": "P4-016", "category": "scalar_time", "question": "本月客单价是多少？", "outcome": "execute", "expected": {"metrics": ["avg_order_value"], "dimensions": [], "time_range": "本月"}}
+{"id": "P4-017", "category": "scalar_time", "question": "近7天复购率是多少？", "outcome": "execute", "expected": {"metrics": ["repurchase_rate"], "dimensions": [], "time_range": "近 7 天"}}
+{"id": "P4-018", "category": "scalar_time", "question": "近30天复购率是多少？", "outcome": "execute", "expected": {"metrics": ["repurchase_rate"], "dimensions": [], "time_range": "近 30 天"}}
+{"id": "P4-019", "category": "scalar_time", "question": "上周复购率是多少？", "outcome": "execute", "expected": {"metrics": ["repurchase_rate"], "dimensions": [], "time_range": "上周"}}
+{"id": "P4-020", "category": "scalar_time", "question": "本月复购率是多少？", "outcome": "execute", "expected": {"metrics": ["repurchase_rate"], "dimensions": [], "time_range": "本月"}}
+{"id": "P4-021", "category": "breakdown_rank", "question": "近30天按商品统计销售额，排名前10", "outcome": "execute", "expected": {"metrics": ["gmv"], "dimensions": ["product"], "time_range": "近 30 天", "limit": 10, "sort_direction": "desc"}}
+{"id": "P4-022", "category": "breakdown_rank", "question": "近30天按类目统计销售额，排名前10", "outcome": "execute", "expected": {"metrics": ["gmv"], "dimensions": ["category"], "time_range": "近 30 天", "limit": 10, "sort_direction": "desc"}}
+{"id": "P4-023", "category": "breakdown_rank", "question": "近30天按渠道统计销售额，排名前10", "outcome": "execute", "expected": {"metrics": ["gmv"], "dimensions": ["channel"], "time_range": "近 30 天", "limit": 10, "sort_direction": "desc"}}
+{"id": "P4-024", "category": "breakdown_rank", "question": "近30天各地区销售额排名前10", "outcome": "execute", "expected": {"metrics": ["gmv"], "dimensions": ["area"], "time_range": "近 30 天", "limit": 10, "sort_direction": "desc"}}
+{"id": "P4-025", "category": "breakdown_rank", "question": "近30天按会员等级统计销售额，排名前10", "outcome": "execute", "expected": {"metrics": ["gmv"], "dimensions": ["vip_level"], "time_range": "近 30 天", "limit": 10, "sort_direction": "desc"}}
+{"id": "P4-026", "category": "breakdown_rank", "question": "近30天按商品统计订单量，排名前10", "outcome": "execute", "expected": {"metrics": ["orders"], "dimensions": ["product"], "time_range": "近 30 天", "limit": 10, "sort_direction": "desc"}}
+{"id": "P4-027", "category": "breakdown_rank", "question": "近30天按类目统计订单量，排名前10", "outcome": "execute", "expected": {"metrics": ["orders"], "dimensions": ["category"], "time_range": "近 30 天", "limit": 10, "sort_direction": "desc"}}
+{"id": "P4-028", "category": "breakdown_rank", "question": "近30天按渠道统计订单量，排名前10", "outcome": "execute", "expected": {"metrics": ["orders"], "dimensions": ["channel"], "time_range": "近 30 天", "limit": 10, "sort_direction": "desc"}}
+{"id": "P4-029", "category": "breakdown_rank", "question": "近30天各地区订单量排名前10", "outcome": "execute", "expected": {"metrics": ["orders"], "dimensions": ["area"], "time_range": "近 30 天", "limit": 10, "sort_direction": "desc"}}
+{"id": "P4-030", "category": "breakdown_rank", "question": "近30天按会员等级统计订单量，排名前10", "outcome": "execute", "expected": {"metrics": ["orders"], "dimensions": ["vip_level"], "time_range": "近 30 天", "limit": 10, "sort_direction": "desc"}}
+{"id": "P4-031", "category": "breakdown_rank", "question": "近30天按商品统计销量，排名前10", "outcome": "execute", "expected": {"metrics": ["units"], "dimensions": ["product"], "time_range": "近 30 天", "limit": 10, "sort_direction": "desc"}}
+{"id": "P4-032", "category": "breakdown_rank", "question": "近30天按类目统计销量，排名前10", "outcome": "execute", "expected": {"metrics": ["units"], "dimensions": ["category"], "time_range": "近 30 天", "limit": 10, "sort_direction": "desc"}}
+{"id": "P4-033", "category": "breakdown_rank", "question": "近30天按渠道统计销量，排名前10", "outcome": "execute", "expected": {"metrics": ["units"], "dimensions": ["channel"], "time_range": "近 30 天", "limit": 10, "sort_direction": "desc"}}
+{"id": "P4-034", "category": "breakdown_rank", "question": "近30天各地区销量排名前10", "outcome": "execute", "expected": {"metrics": ["units"], "dimensions": ["area"], "time_range": "近 30 天", "limit": 10, "sort_direction": "desc"}}
+{"id": "P4-035", "category": "breakdown_rank", "question": "近30天按会员等级统计销量，排名前10", "outcome": "execute", "expected": {"metrics": ["units"], "dimensions": ["vip_level"], "time_range": "近 30 天", "limit": 10, "sort_direction": "desc"}}
+{"id": "P4-036", "category": "breakdown_rank", "question": "近30天按商品统计客单价，排名前10", "outcome": "execute", "expected": {"metrics": ["avg_order_value"], "dimensions": ["product"], "time_range": "近 30 天", "limit": 10, "sort_direction": "desc"}}
+{"id": "P4-037", "category": "breakdown_rank", "question": "近30天按类目统计客单价，排名前10", "outcome": "execute", "expected": {"metrics": ["avg_order_value"], "dimensions": ["category"], "time_range": "近 30 天", "limit": 10, "sort_direction": "desc"}}
+{"id": "P4-038", "category": "breakdown_rank", "question": "近30天按渠道统计客单价，排名前10", "outcome": "execute", "expected": {"metrics": ["avg_order_value"], "dimensions": ["channel"], "time_range": "近 30 天", "limit": 10, "sort_direction": "desc"}}
+{"id": "P4-039", "category": "breakdown_rank", "question": "近30天各地区客单价排名前10", "outcome": "execute", "expected": {"metrics": ["avg_order_value"], "dimensions": ["area"], "time_range": "近 30 天", "limit": 10, "sort_direction": "desc"}}
+{"id": "P4-040", "category": "breakdown_rank", "question": "近30天按会员等级统计客单价，排名前10", "outcome": "execute", "expected": {"metrics": ["avg_order_value"], "dimensions": ["vip_level"], "time_range": "近 30 天", "limit": 10, "sort_direction": "desc"}}
+{"id": "P4-041", "category": "breakdown_rank", "question": "近30天按商品统计复购率，排名前10", "outcome": "execute", "expected": {"metrics": ["repurchase_rate"], "dimensions": ["product"], "time_range": "近 30 天", "limit": 10, "sort_direction": "desc"}}
+{"id": "P4-042", "category": "breakdown_rank", "question": "近30天按类目统计复购率，排名前10", "outcome": "execute", "expected": {"metrics": ["repurchase_rate"], "dimensions": ["category"], "time_range": "近 30 天", "limit": 10, "sort_direction": "desc"}}
+{"id": "P4-043", "category": "breakdown_rank", "question": "近30天按渠道统计复购率，排名前10", "outcome": "execute", "expected": {"metrics": ["repurchase_rate"], "dimensions": ["channel"], "time_range": "近 30 天", "limit": 10, "sort_direction": "desc"}}
+{"id": "P4-044", "category": "breakdown_rank", "question": "近30天各地区复购率排名前10", "outcome": "execute", "expected": {"metrics": ["repurchase_rate"], "dimensions": ["area"], "time_range": "近 30 天", "limit": 10, "sort_direction": "desc"}}
+{"id": "P4-045", "category": "breakdown_rank", "question": "近30天按会员等级统计复购率，排名前10", "outcome": "execute", "expected": {"metrics": ["repurchase_rate"], "dimensions": ["vip_level"], "time_range": "近 30 天", "limit": 10, "sort_direction": "desc"}}
+{"id": "P4-046", "category": "daily_trend", "question": "近30天每日销售额趋势", "outcome": "execute", "expected": {"metrics": ["gmv"], "dimensions": ["order_date"], "time_range": "近 30 天"}}
+{"id": "P4-047", "category": "daily_trend", "question": "近30天每日订单量趋势", "outcome": "execute", "expected": {"metrics": ["orders"], "dimensions": ["order_date"], "time_range": "近 30 天"}}
+{"id": "P4-048", "category": "daily_trend", "question": "近30天每日销量趋势", "outcome": "execute", "expected": {"metrics": ["units"], "dimensions": ["order_date"], "time_range": "近 30 天"}}
+{"id": "P4-049", "category": "daily_trend", "question": "近30天每日客单价趋势", "outcome": "execute", "expected": {"metrics": ["avg_order_value"], "dimensions": ["order_date"], "time_range": "近 30 天"}}
+{"id": "P4-050", "category": "daily_trend", "question": "近30天每日复购率趋势", "outcome": "execute", "expected": {"metrics": ["repurchase_rate"], "dimensions": ["order_date"], "time_range": "近 30 天"}}
+{"id": "P4-051", "category": "area_filter", "question": "近30天华东销售额是多少？", "outcome": "execute", "expected": {"metrics": ["gmv"], "dimensions": [], "time_range": "近 30 天", "area": "华东"}}
+{"id": "P4-052", "category": "area_filter", "question": "近30天华南销售额是多少？", "outcome": "execute", "expected": {"metrics": ["gmv"], "dimensions": [], "time_range": "近 30 天", "area": "华南"}}
+{"id": "P4-053", "category": "area_filter", "question": "近30天华北销售额是多少？", "outcome": "execute", "expected": {"metrics": ["gmv"], "dimensions": [], "time_range": "近 30 天", "area": "华北"}}
+{"id": "P4-054", "category": "area_filter", "question": "近30天华东订单量是多少？", "outcome": "execute", "expected": {"metrics": ["orders"], "dimensions": [], "time_range": "近 30 天", "area": "华东"}}
+{"id": "P4-055", "category": "area_filter", "question": "近30天华南订单量是多少？", "outcome": "execute", "expected": {"metrics": ["orders"], "dimensions": [], "time_range": "近 30 天", "area": "华南"}}
+{"id": "P4-056", "category": "area_filter", "question": "近30天华北订单量是多少？", "outcome": "execute", "expected": {"metrics": ["orders"], "dimensions": [], "time_range": "近 30 天", "area": "华北"}}
+{"id": "P4-057", "category": "area_filter", "question": "近30天华东销量是多少？", "outcome": "execute", "expected": {"metrics": ["units"], "dimensions": [], "time_range": "近 30 天", "area": "华东"}}
+{"id": "P4-058", "category": "area_filter", "question": "近30天华南销量是多少？", "outcome": "execute", "expected": {"metrics": ["units"], "dimensions": [], "time_range": "近 30 天", "area": "华南"}}
+{"id": "P4-059", "category": "area_filter", "question": "近30天华北销量是多少？", "outcome": "execute", "expected": {"metrics": ["units"], "dimensions": [], "time_range": "近 30 天", "area": "华北"}}
+{"id": "P4-060", "category": "area_filter", "question": "近30天华东客单价是多少？", "outcome": "execute", "expected": {"metrics": ["avg_order_value"], "dimensions": [], "time_range": "近 30 天", "area": "华东"}}
+{"id": "P4-061", "category": "area_filter", "question": "近30天华南客单价是多少？", "outcome": "execute", "expected": {"metrics": ["avg_order_value"], "dimensions": [], "time_range": "近 30 天", "area": "华南"}}
+{"id": "P4-062", "category": "area_filter", "question": "近30天华北客单价是多少？", "outcome": "execute", "expected": {"metrics": ["avg_order_value"], "dimensions": [], "time_range": "近 30 天", "area": "华北"}}
+{"id": "P4-063", "category": "area_filter", "question": "近30天华东复购率是多少？", "outcome": "execute", "expected": {"metrics": ["repurchase_rate"], "dimensions": [], "time_range": "近 30 天", "area": "华东"}}
+{"id": "P4-064", "category": "area_filter", "question": "近30天华南复购率是多少？", "outcome": "execute", "expected": {"metrics": ["repurchase_rate"], "dimensions": [], "time_range": "近 30 天", "area": "华南"}}
+{"id": "P4-065", "category": "area_filter", "question": "近30天华北复购率是多少？", "outcome": "execute", "expected": {"metrics": ["repurchase_rate"], "dimensions": [], "time_range": "近 30 天", "area": "华北"}}
+{"id": "P4-066", "category": "comparison", "question": "近30天销售额环比上期变化多少？", "outcome": "execute", "expected": {"metrics": ["gmv"], "dimensions": [], "comparison": "mom", "time_range": "近 30 天"}}
+{"id": "P4-067", "category": "comparison", "question": "近7天销售额环比上期变化多少？", "outcome": "execute", "expected": {"metrics": ["gmv"], "dimensions": [], "comparison": "mom", "time_range": "近 7 天"}}
+{"id": "P4-068", "category": "comparison", "question": "上个月销售额环比上期变化多少？", "outcome": "execute", "expected": {"metrics": ["gmv"], "dimensions": [], "comparison": "mom", "time_range": "上个月"}}
+{"id": "P4-069", "category": "comparison", "question": "本月销售额同比去年同期变化多少？", "outcome": "execute", "expected": {"metrics": ["gmv"], "dimensions": [], "comparison": "yoy", "time_range": "本月"}}
+{"id": "P4-070", "category": "contribution", "question": "近30天商品销售额增长贡献排名前10", "outcome": "execute", "expected": {"metrics": ["gmv"], "dimensions": ["product"], "time_range": "近 30 天", "analysis_type": "contribution", "comparison": "mom", "limit": 10}}
+{"id": "P4-071", "category": "contribution", "question": "近30天类目销售额增长贡献排名前10", "outcome": "execute", "expected": {"metrics": ["gmv"], "dimensions": ["category"], "time_range": "近 30 天", "analysis_type": "contribution", "comparison": "mom", "limit": 10}}
+{"id": "P4-072", "category": "contribution", "question": "近30天渠道销售额增长贡献排名前10", "outcome": "execute", "expected": {"metrics": ["gmv"], "dimensions": ["channel"], "time_range": "近 30 天", "analysis_type": "contribution", "comparison": "mom", "limit": 10}}
+{"id": "P4-073", "category": "contribution", "question": "近30天各地区销售额增长贡献排名前10", "outcome": "execute", "expected": {"metrics": ["gmv"], "dimensions": ["area"], "time_range": "近 30 天", "analysis_type": "contribution", "comparison": "mom", "limit": 10}}
+{"id": "P4-074", "category": "inventory", "question": "下周各商品应该补货多少？", "outcome": "execute", "expected": {"capability": "inventory_forecast", "metrics": ["units"], "dimensions": ["product"], "forecast_horizon": "next_calendar_week"}}
+{"id": "P4-075", "category": "inventory", "question": "下月各商品应该准备多少库存量？", "outcome": "execute", "expected": {"capability": "inventory_forecast", "metrics": ["units"], "dimensions": ["product"], "forecast_horizon": "next_calendar_month"}}
+{"id": "P4-076", "category": "inventory", "question": "下季度各商品应该准备多少库存？", "outcome": "execute", "expected": {"capability": "inventory_forecast", "metrics": ["units"], "dimensions": ["product"], "forecast_horizon": "next_calendar_quarter"}}
+{"id": "P4-077", "category": "inventory", "question": "明年各商品需要备货多少？", "outcome": "execute", "expected": {"capability": "inventory_forecast", "metrics": ["units"], "dimensions": ["product"], "forecast_horizon": "next_calendar_year"}}
+{"id": "P4-078", "category": "inventory", "question": "未来45天各商品预计补货多少？", "outcome": "execute", "expected": {"capability": "inventory_forecast", "metrics": ["units"], "dimensions": ["product"], "forecast_horizon": "next_45_days"}}
+{"id": "P4-079", "category": "follow_up", "question": "主要贡献来源是什么商品？", "outcome": "execute", "expected": {"previous_question": "近30天销售额环比上期变化多少？", "metrics": ["gmv"], "dimensions": ["product"], "time_range": "近 30 天", "comparison": "mom", "analysis_type": "contribution"}}
+{"id": "P4-080", "category": "follow_up", "question": "那按渠道分别看呢？", "outcome": "execute", "expected": {"previous_question": "近30天订单量是多少？", "metrics": ["orders"], "dimensions": ["channel"], "time_range": "近 30 天"}}
+{"id": "P4-081", "category": "unsupported_business", "question": "哪个渠道转化率最高？", "outcome": "refuse", "expected": {"capability": "unsupported_business"}}
+{"id": "P4-082", "category": "unsupported_business", "question": "近30天毛利率是多少？", "outcome": "refuse", "expected": {"capability": "unsupported_business"}}
+{"id": "P4-083", "category": "unsupported_business", "question": "预测下个月销售额是多少？", "outcome": "refuse", "expected": {"capability": "unsupported_forecast"}}
+{"id": "P4-084", "category": "unsupported_business", "question": "各渠道广告投放 ROI 是多少？", "outcome": "refuse", "expected": {"capability": "unsupported_business"}}
+{"id": "P4-085", "category": "unsupported_business", "question": "上月退款率是多少？", "outcome": "refuse", "expected": {"capability": "unsupported_business"}}
+{"id": "P4-086", "category": "unsupported_business", "question": "用户30日留存率是多少？", "outcome": "refuse", "expected": {"capability": "unsupported_business"}}
+{"id": "P4-087", "category": "unsupported_business", "question": "物流平均签收时长是多少？", "outcome": "refuse", "expected": {"capability": "unsupported_business"}}
+{"id": "P4-088", "category": "unsupported_business", "question": "明天哪些用户会流失？", "outcome": "refuse", "expected": {"capability": "unsupported_business"}}
+{"id": "P4-089", "category": "unsupported_business", "question": "分析竞品价格变化", "outcome": "refuse", "expected": {"capability": "unsupported_business"}}
+{"id": "P4-090", "category": "unsupported_business", "question": "请导出所有用户的手机号和邮箱", "outcome": "refuse", "expected": {"capability": "unsupported_business"}}
+{"id": "P4-091", "category": "out_of_scope", "question": "今天天气怎么样？", "outcome": "refuse", "expected": {"capability": "out_of_scope"}}
+{"id": "P4-092", "category": "out_of_scope", "question": "给我写一首诗", "outcome": "refuse", "expected": {"capability": "out_of_scope"}}
+{"id": "P4-093", "category": "out_of_scope", "question": "把这句话翻译成英文", "outcome": "refuse", "expected": {"capability": "out_of_scope"}}
+{"id": "P4-094", "category": "out_of_scope", "question": "世界杯决赛谁赢了？", "outcome": "refuse", "expected": {"capability": "out_of_scope"}}
+{"id": "P4-095", "category": "out_of_scope", "question": "帮我写一个 Python 爬虫", "outcome": "refuse", "expected": {"capability": "out_of_scope"}}
+{"id": "P4-096", "category": "out_of_scope", "question": "总统是谁？", "outcome": "refuse", "expected": {"capability": "out_of_scope"}}
+{"id": "P4-097", "category": "out_of_scope", "question": "我发烧了该吃什么药？", "outcome": "refuse", "expected": {"capability": "out_of_scope"}}
+{"id": "P4-098", "category": "out_of_scope", "question": "计算 123 乘以 456", "outcome": "refuse", "expected": {"capability": "out_of_scope"}}
+{"id": "P4-099", "category": "out_of_scope", "question": "红烧肉怎么做？", "outcome": "refuse", "expected": {"capability": "out_of_scope"}}
+{"id": "P4-100", "category": "out_of_scope", "question": "推荐一条周末旅游路线", "outcome": "refuse", "expected": {"capability": "out_of_scope"}}
+{"id": "P4-101", "category": "business_edge", "question": "近14天GMV是多少？", "outcome": "execute", "expected": {"metrics": ["gmv"], "dimensions": [], "time_range": "近 14 天"}}
+{"id": "P4-102", "category": "business_edge", "question": "上个月成交额是多少？", "outcome": "execute", "expected": {"metrics": ["gmv"], "dimensions": [], "time_range": "上个月"}}
+{"id": "P4-103", "category": "business_edge", "question": "今年订单数是多少？", "outcome": "execute", "expected": {"metrics": ["orders"], "dimensions": [], "time_range": "今年"}}
+{"id": "P4-104", "category": "business_edge", "question": "近30天销量最低的商品前5", "outcome": "execute", "expected": {"metrics": ["units"], "dimensions": ["product"], "time_range": "近 30 天", "sort_direction": "asc", "limit": 5}}
+{"id": "P4-105", "category": "business_edge", "question": "近30天各类目客单价排名前3", "outcome": "execute", "expected": {"metrics": ["avg_order_value"], "dimensions": ["category"], "time_range": "近 30 天", "limit": 3}}
+{"id": "P4-106", "category": "business_edge", "question": "近7天每日订单量趋势", "outcome": "execute", "expected": {"metrics": ["orders"], "dimensions": ["order_date"], "time_range": "近 7 天", "sort_direction": "asc"}}
+{"id": "P4-107", "category": "business_edge", "question": "近30天华中商品销量前5", "outcome": "execute", "expected": {"metrics": ["units"], "dimensions": ["product"], "time_range": "近 30 天", "area": "华中", "limit": 5}}
+{"id": "P4-108", "category": "business_edge", "question": "近30天GMV和订单量分别是多少？", "outcome": "execute", "expected": {"metrics": ["orders", "gmv"], "dimensions": [], "time_range": "近 30 天"}}
+{"id": "P4-109", "category": "business_edge", "question": "本周各渠道复购率排名前5", "outcome": "execute", "expected": {"metrics": ["repurchase_rate"], "dimensions": ["channel"], "time_range": "本周", "limit": 5}}
+{"id": "P4-110", "category": "business_edge", "question": "近30天哪些商品滞销", "outcome": "execute", "expected": {"metrics": ["units"], "dimensions": ["product"], "time_range": "近 30 天", "sort_direction": "asc", "limit": 10, "oracle_kind": "slow_moving"}}

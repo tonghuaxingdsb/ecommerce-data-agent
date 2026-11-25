@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date
+
 import psycopg
 import pytest
 
@@ -86,6 +88,7 @@ def test_sales_trend_defaults_to_gmv_and_keeps_recent_time_range():
     assert plan.query_spec["dimensions"] == ("order_date",)
     assert plan.query_spec["time_range"] == "近 30 天"
     assert "GROUP BY o.order_date" in plan.candidate_sql
+    assert "ORDER BY order_date ASC" in plan.candidate_sql
 
 
 def test_inventory_planning_uses_registered_forecast_capability():
@@ -134,6 +137,25 @@ def test_inventory_planning_compiles_next_calendar_quarter():
     assert "INTERVAL '3 months'" in plan.candidate_sql
     assert "INTERVAL '6 months'" in plan.candidate_sql
     assert "下个自然季度" in plan.summary
+
+
+def test_inventory_safety_stock_uses_exact_integer_ceiling_when_postgres_is_available():
+    try:
+        with psycopg.connect(DATABASE_URL, connect_timeout=1) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT 1")
+    except psycopg.OperationalError:
+        pytest.skip("PostgreSQL is not available.")
+
+    plan = fallback_sql_plan("下周各商品应该补货多少", "inventory_planning")
+    result = execute_sql(plan.candidate_sql, settings=Settings(database_url=DATABASE_URL))
+
+    assert result.ok is True
+    assert result.rows
+    for row in result.rows:
+        days = (date.fromisoformat(row["forecast_end"]) - date.fromisoformat(row["forecast_start"])).days + 1
+        exact_ceiling = (row["forecast_units"] * 7 + days - 1) // days
+        assert row["safety_stock_units"] == exact_ceiling
 
 
 def test_product_contribution_follow_up_inherits_metric_time_and_comparison():

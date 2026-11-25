@@ -189,6 +189,7 @@ def build_query_spec(
             clarifying_question=(
                 f"{capability.reason}。请改问‘按趋势估算下个月各商品应补多少库存’，"
                 "或先补充对应预测目标的数据与预测工具。"
+                if capability.capability == "unsupported_forecast" else capability.reason
             ),
         )
     supplied_metrics = _normalize_many(payload.get("metrics"), _METRIC_ALIASES)
@@ -235,9 +236,12 @@ def build_query_spec(
     sort_by = _normalize_metric(payload.get("sort_by")) or _normalize_metric(inherited.get("sort_by"))
     if metrics and (_is_ranking_question(question) or dimensions):
         sort_by = metrics[0]
-    direction = "asc" if any(token in question.lower() for token in ("最低", "最少", "倒数")) else "desc"
+    direction = "asc" if any(token in question.lower() for token in ("最低", "最少", "倒数", "滞销")) else "desc"
     if str(payload.get("sort_direction") or "").lower() in {"asc", "desc"} and not _is_ranking_question(question):
         direction = str(payload["sort_direction"]).lower()
+    if dimensions == ("order_date",) and not _is_ranking_question(question):
+        sort_by = "order_date"
+        direction = "asc"
 
     limit = _extract_limit(question)
     if limit is None:
@@ -414,7 +418,7 @@ WITH bounds AS (
            s.trend_units_per_day, b.forecast_start, b.forecast_end
 ), inventory_plan AS (
   SELECT *,
-         CEIL(forecast_units::numeric / NULLIF(forecast_horizon_days, 0) * {safety_days})::int AS safety_stock_units
+         ((forecast_units * {safety_days} + forecast_horizon_days - 1) / NULLIF(forecast_horizon_days, 0))::int AS safety_stock_units
   FROM forecast
 ), recommendations AS (
   SELECT product_name,
@@ -727,6 +731,8 @@ def _order_by_fragment(spec: QuerySpec) -> str:
 
 def _detect_metrics(question: str) -> tuple[tuple[str, ...], str | None]:
     text = question.lower().replace(" ", "")
+    if "滞销" in text:
+        return ("units",), None
     if "转化率" in text or "转化" in text:
         return (), "conversion_rate"
     if "毛利" in text or "利润" in text:

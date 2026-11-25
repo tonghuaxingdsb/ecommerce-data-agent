@@ -323,7 +323,7 @@ CREATE TABLE dim_region (
 - 详细问题记录见 `phase3-development-log.md`。
 
 ### Phase 4：打磨与简历（第 8 周）
-- [ ] 自建评测集（50 条业务问题，量化准确率）
+- [x] 自建评测集（100条业务问题，量化准确率）
 - [ ] 录制 demo / README 架构图
 - [ ] 简历话术 + 面试问答准备
 

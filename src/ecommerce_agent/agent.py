@@ -273,7 +273,11 @@ def build_agent_graph(llm: CompletionGateway | None = None, sql_runner: SQLRunne
     graph.add_node("summarize_result", summarize_result)
     graph.add_node("finalize", finalize)
     graph.add_edge(START, "classify_intent")
-    graph.add_edge("classify_intent", "prepare_context")
+    graph.add_conditional_edges(
+        "classify_intent",
+        lambda state: "prepare_context" if state.get("capability") == "semantic_sql" else "generate_sql",
+        {"prepare_context": "prepare_context", "generate_sql": "generate_sql"},
+    )
     graph.add_edge("prepare_context", "generate_sql")
     graph.add_edge("generate_sql", "validate_semantics")
     graph.add_conditional_edges(
@@ -324,6 +328,8 @@ def build_answer(state: AgentState) -> str:
     plan = state.get("plan", {})
     language = state.get("response_language", "zh")
     if plan.get("needs_clarification"):
+        if state.get("capability") != "semantic_sql":
+            return str(plan.get("clarifying_question") or "当前请求不在已注册的数据分析能力范围内。")
         if language == "zh":
             return f"需要先澄清口径：{plan.get('clarifying_question')}"
         return f"I need to clarify the metric first: {plan.get('clarifying_question')}"

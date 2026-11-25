@@ -75,6 +75,8 @@ def parse_sql_plan(
     question: str,
     inherited_query_spec: dict[str, Any] | None = None,
 ) -> SQLPlan:
+    if "滞销" in question:
+        return fallback_sql_plan(question, default_intent, inherited_query_spec=inherited_query_spec)
     try:
         payload = json.loads(extract_json(text))
     except json.JSONDecodeError:
@@ -83,7 +85,7 @@ def parse_sql_plan(
     raw_spec = payload.get("query_spec") if isinstance(payload.get("query_spec"), dict) else {}
     spec = build_query_spec(question, raw_spec, inherited=inherited_query_spec)
     candidate_sql = str(payload.get("candidate_sql") or "")
-    force_compiled = spec.analysis_type == "contribution" or spec.capability != "semantic_sql"
+    force_compiled = spec.analysis_type == "contribution" or spec.capability != "semantic_sql" or spec.dimensions == ("order_date",)
     compiled = compile_query_spec(spec, question) if not candidate_sql or force_compiled else None
     return SQLPlan(
         intent=_intent_from_spec(spec, str(payload.get("intent") or default_intent)),
@@ -110,6 +112,29 @@ def fallback_sql_plan(
     intent: str,
     inherited_query_spec: dict[str, Any] | None = None,
 ) -> SQLPlan:
+    spec = build_query_spec(question, inherited=inherited_query_spec)
+    if spec.capability != "semantic_sql":
+        if spec.needs_clarification:
+            return SQLPlan(
+                intent=_intent_from_spec(spec, intent),
+                needs_clarification=True,
+                clarifying_question=spec.clarifying_question,
+                analysis_plan=["识别能力边界和所需数据"],
+                summary=spec.clarifying_question,
+                query_spec=spec.to_dict(),
+            )
+        compiled = compile_query_spec(spec, question)
+        return SQLPlan(
+            intent=_intent_from_spec(spec, intent),
+            analysis_plan=default_steps(),
+            candidate_sql=compiled.sql,
+            summary=compiled.summary,
+            chart_type=compiled.chart_type,
+            chart_x=compiled.chart_x,
+            chart_y=compiled.chart_y,
+            query_spec=spec.to_dict(),
+        )
+
     if is_ambiguous_metric_question(question):
         return SQLPlan(
             intent=intent,
@@ -121,13 +146,13 @@ def fallback_sql_plan(
 
     if "滞销" in question:
         sql = """
-SELECT p.product_name, p.category, p.stock, COALESCE(SUM(o.quantity), 0) AS units_sold, COALESCE(SUM(o.amount), 0) AS gmv
+SELECT p.product_name, p.category, p.stock, COALESCE(SUM(o.quantity), 0) AS units, COALESCE(SUM(o.amount), 0) AS gmv
 FROM dim_product p
 LEFT JOIN fact_orders o ON o.product_id = p.product_id AND o.status = 'paid' AND o.order_date >= (SELECT max(order_date) - INTERVAL '29 days' FROM fact_orders)
 GROUP BY p.product_name, p.category, p.stock
 HAVING COALESCE(SUM(o.quantity), 0) < 20 AND p.stock > 500
-ORDER BY units_sold ASC, p.stock DESC
-LIMIT 20
+ORDER BY units ASC, p.stock DESC
+LIMIT 10
 """.strip()
         spec = build_query_spec("近 30 天销量最低的商品")
         return SQLPlan(
@@ -137,11 +162,10 @@ LIMIT 20
             summary="按近 30 天 paid 销量和当前库存识别疑似滞销商品。",
             chart_type="bar",
             chart_x="product_name",
-            chart_y="units_sold",
+            chart_y="units",
             query_spec=spec.to_dict(),
         )
 
-    spec = build_query_spec(question, inherited=inherited_query_spec)
     if spec.needs_clarification:
         return SQLPlan(
             intent=_intent_from_spec(spec, intent),

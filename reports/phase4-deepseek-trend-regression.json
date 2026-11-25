@@ -1,0 +1,103 @@
+{
+  "benchmark": "phase4-100",
+  "provider": "deepseek",
+  "model": "deepseek-v4-pro",
+  "dataset_sha256": "13acfa905f9d1fffc5e1f8ad8c2d7b225aab772a82501d988a905f2e297c973c",
+  "prompt_sha256": "136c981d15ae3361873415fb70446bb60cf4d6faed6e18cd260fe0972d868999",
+  "data_snapshot": {
+    "order_count": 120000,
+    "max_order_date": "2026-08-31"
+  },
+  "evaluated_at": "2026-09-23T08:15:08.105751+00:00",
+  "cases": 5,
+  "accuracy": 1.0,
+  "plan_accuracy": 1.0,
+  "execution_or_refusal_rate": 1.0,
+  "result_equivalence": {
+    "passed": 5,
+    "eligible": 5
+  },
+  "by_category": {
+    "daily_trend": {
+      "correct": 5,
+      "total": 5
+    }
+  },
+  "records": [
+    {
+      "id": "P4-046",
+      "category": "daily_trend",
+      "question": "近30天每日销售额趋势",
+      "expected_outcome": "execute",
+      "actual_capability": "semantic_sql",
+      "plan_ok": true,
+      "failed_slots": [],
+      "execution_ok": true,
+      "result_ok": true,
+      "reference_error": null,
+      "correct": true,
+      "sql_error": "",
+      "semantic_error": ""
+    },
+    {
+      "id": "P4-047",
+      "category": "daily_trend",
+      "question": "近30天每日订单量趋势",
+      "expected_outcome": "execute",
+      "actual_capability": "semantic_sql",
+      "plan_ok": true,
+      "failed_slots": [],
+      "execution_ok": true,
+      "result_ok": true,
+      "reference_error": null,
+      "correct": true,
+      "sql_error": "",
+      "semantic_error": ""
+    },
+    {
+      "id": "P4-048",
+      "category": "daily_trend",
+      "question": "近30天每日销量趋势",
+      "expected_outcome": "execute",
+      "actual_capability": "semantic_sql",
+      "plan_ok": true,
+      "failed_slots": [],
+      "execution_ok": true,
+      "result_ok": true,
+      "reference_error": null,
+      "correct": true,
+      "sql_error": "",
+      "semantic_error": ""
+    },
+    {
+      "id": "P4-049",
+      "category": "daily_trend",
+      "question": "近30天每日客单价趋势",
+      "expected_outcome": "execute",
+      "actual_capability": "semantic_sql",
+      "plan_ok": true,
+      "failed_slots": [],
+      "execution_ok": true,
+      "result_ok": true,
+      "reference_error": null,
+      "correct": true,
+      "sql_error": "",
+      "semantic_error": ""
+    },
+    {
+      "id": "P4-050",
+      "category": "daily_trend",
+      "question": "近30天每日复购率趋势",
+      "expected_outcome": "execute",
+      "actual_capability": "semantic_sql",
+      "plan_ok": true,
+      "failed_slots": [],
+      "execution_ok": true,
+      "result_ok": true,
+      "reference_error": null,
+      "correct": true,
+      "sql_error": "",
+      "semantic_error": ""
+    }
+  ]
+}

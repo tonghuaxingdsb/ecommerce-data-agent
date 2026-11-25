@@ -111,6 +111,27 @@ Example semantic plan for `什么商品的复购率高`:
 
 See [phase3-development-log.md](phase3-development-log.md) for engineering notes and verification limits.
 
+## Phase 4 evaluation
+
+The fixed benchmark in `src/ecommerce_agent/eval_cases.py`, exported to `data/evaluation/phase4_cases.jsonl`, contains **100 business questions plus 10 out-of-scope questions**. The business set has 90 executable ecommerce analyses (five metrics, rolling/calendar periods, product/category/channel/region/VIP breakdowns, ranking, daily trends, regional filters, period comparisons, growth contribution, inventory horizons, follow-ups and slow-moving products) and 10 requests that need unavailable data or tools. Unsupported requests must return a useful capability/data explanation with no SQL execution; unrelated requests must stay outside the SQL and LLM path.
+
+Run the full agent graph against the seeded PostgreSQL database:
+
+```powershell
+uv run python -m scripts.evaluate_phase4 --provider mock --output reports/phase4-mock.json
+uv run python -m scripts.evaluate_phase4 --provider deepseek --workers 4 --output reports/phase4-deepseek.json
+uv run python -m scripts.evaluate_phase4 --export-cases data/evaluation/phase4_cases.jsonl
+```
+
+`deepseek` requires `DEEPSEEK_API_KEY`; `mock` is the deterministic offline regression baseline. A seeded PostgreSQL database is required. Reports include the dataset/prompt hashes, order count and latest order date, per-case failures and four different measures:
+
+- **Plan accuracy:** all annotated capability, metric, dimension, time, filter, comparison, ranking and forecast slots match.
+- **Execution/refusal rate:** supported questions execute a SQL query without SQL/semantic errors; unsupported questions return no SQL and a nonempty explanation.
+- **Result equivalence:** all 90 executable cases compare relevant result columns against independently constructed reference results. Aggregate, comparison, contribution and slow-moving cases use reference SQL; inventory horizons recompute the 90-day trend and replenishment arithmetic in Python from daily source observations. Row order is ignored, and numeric values are compared at their reported precision.
+- **Accuracy:** a case passes when every applicable check passes. Reports give separate business and out-of-scope accuracy. This is a fixed synthetic-data benchmark score, not a claim about production traffic or unseen questions.
+
+The agent now routes missing-data business questions to `unsupported_business` and unrelated requests to `out_of_scope` before retrieval, model generation or SQL execution. Existing `unsupported_forecast` handling remains separate. The final benchmark and limitations are recorded in [phase4-development-log.md](phase4-development-log.md).
+
 ## SQL Safety
 
 `execute_sql` is intentionally narrow for the MVP:
