@@ -15,7 +15,7 @@ from ecommerce_agent.schema_context import DEFAULT_SCHEMA_CONTEXT, METRIC_CONTEX
 from ecommerce_agent.semantic import build_query_spec, validate_sql_semantics
 from ecommerce_agent.sql_tool import SQLExecutionResult, execute_sql
 from ecommerce_agent.text_to_sql import fallback_sql_plan, parse_sql_plan
-from ecommerce_agent.time_intelligence import campaign_match
+from ecommerce_agent.time_intelligence import campaign_match, explicit_calendar_year
 
 
 class AgentState(TypedDict, total=False):
@@ -225,13 +225,19 @@ def build_agent_graph(llm: CompletionGateway | None = None, sql_runner: SQLRunne
                 "natural_language_analysis": fallback_analysis,
                 "trace": [*state.get("trace", []), "summarize_result:deterministic_capability"],
             }
-        sales_comparison = state["intent"] == "sales_overview" and rows and "current_gmv" in rows[0]
         time_range = (state.get("query_spec") or {}).get("time_range") or ""
-        if language == "zh" and (sales_comparison or (not rows and campaign_match(time_range))):
+        deterministic_summary = None
+        if language == "zh" and state["intent"] == "sales_overview" and rows and "current_gmv" in rows[0]:
+            deterministic_summary = "sales_comparison"
+        elif language == "zh" and not rows and campaign_match(time_range):
+            deterministic_summary = "empty_campaign"
+        elif not rows and explicit_calendar_year(time_range or state["question"]) is not None:
+            deterministic_summary = "empty_year"
+        if deterministic_summary:
             return {
                 **state,
                 "natural_language_analysis": fallback_analysis,
-                "trace": [*state.get("trace", []), "summarize_result:sales_comparison" if sales_comparison else "summarize_result:empty_campaign"],
+                "trace": [*state.get("trace", []), f"summarize_result:{deterministic_summary}"],
             }
         result = gateway.summarize(
             question=state.get("effective_question", state["question"]),
@@ -241,7 +247,7 @@ def build_agent_graph(llm: CompletionGateway | None = None, sql_runner: SQLRunne
             rows=state.get("rows", []),
             language=language,
         )
-        use_model_analysis = is_usable_analysis(result.text, language)
+        use_model_analysis = result.configured and is_usable_analysis(result.text, language)
         return {
             **state,
             "natural_language_analysis": result.text.strip() if use_model_analysis else fallback_analysis,
@@ -343,7 +349,7 @@ def build_answer(state: AgentState) -> str:
             return str(plan.get("clarifying_question") or "当前请求不在已注册的数据分析能力范围内。")
         if language == "zh":
             return f"需要先澄清口径：{plan.get('clarifying_question')}"
-        return f"I need to clarify the metric first: {plan.get('clarifying_question')}"
+        return f"I need to clarify the query first: {plan.get('clarifying_question')}"
 
     sql_error = state.get("sql_error")
     semantic_error = state.get("semantic_error")
@@ -364,6 +370,7 @@ def build_answer(state: AgentState) -> str:
         intent=state["intent"],
         rows=state.get("rows", []),
         language=language,
+        query_spec=state.get("query_spec"),
     )
 
 

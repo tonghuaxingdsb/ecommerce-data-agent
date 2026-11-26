@@ -14,7 +14,13 @@ from ecommerce_agent.dimension_filters import (
     dimension_filter_value,
     extract_dimension_filters,
 )
-from ecommerce_agent.time_intelligence import build_period_predicates, campaign_match, parse_time_intent
+from ecommerce_agent.language import detect_response_language
+from ecommerce_agent.time_intelligence import (
+    build_period_predicates,
+    campaign_match,
+    needs_time_clarification,
+    parse_time_intent,
+)
 
 
 SUPPORTED_METRICS = {
@@ -112,7 +118,21 @@ _DIMENSION_ALIASES = {
 }
 
 _AREA_NAMES = ("华东", "华南", "华北", "西南", "华中", "西北", "东北")
-_TIME_MARKERS = ("近", "最近", "上周", "上星期", "本周", "本月", "这个月", "上月", "上个月", "今年", "年度")
+_ENGLISH_GROUPS = {
+    "channel": "channel",
+    "category": "category",
+    "region": "area",
+    "product": "product",
+    "membership level": "vip_level",
+    "vip level": "vip_level",
+    "day": "order_date",
+    "month": "order_month",
+}
+_ENGLISH_GROUP_WORDS = r"[a-z]+(?:\s+level)?"
+_ENGLISH_GROUP = re.compile(
+    rf"\bby\s+({_ENGLISH_GROUP_WORDS}(?:(?:\s*,\s*(?:and\s+)?|\s+and\s+){_ENGLISH_GROUP_WORDS})*)",
+    re.IGNORECASE,
+)
 USER_METRICS = {"registered_users", "users"}
 _SELL_THROUGH_RANKING = ("卖得最差", "卖得最少", "卖得最好", "卖得最多")
 _RANKING_MARKERS = ("最高", "最低", "top", "前", "排名", "排行", "哪些", "什么", "更高", *_SELL_THROUGH_RANKING)
@@ -249,8 +269,9 @@ def build_query_spec(
         filters = (*filters, QueryFilter(field="status", operator="=", value=status))
 
     monthly = "order_month" in dimensions
+    time_intent = parse_time_intent(question)
     time_range = (
-        _explicit_time_range(question)
+        (time_intent.label if time_intent.explicit else None)
         or (None if monthly else _optional_string(payload.get("time_range")))
         or _optional_string(inherited.get("time_range"))
     )
@@ -302,6 +323,18 @@ def build_query_spec(
         clarification = "当前数据只有订单，没有曝光、访问或点击数据，无法计算转化率。请补充漏斗数据或改问销售额、订单量等已有指标。"
     elif unsupported_metric == "profit":
         clarification = "当前数据没有成本字段，无法计算利润或毛利率。请补充成本数据或改问销售额。"
+    elif needs_time_clarification(question):
+        clarification = (
+            "请明确要查询的时间范围，例如上个月、近 7 天或 2026 年。"
+            if detect_response_language(question) == "zh"
+            else "Please specify a supported time range, such as last month or the last 7 days."
+        )
+    elif any(group not in _ENGLISH_GROUPS for group in _english_group_labels(question)):
+        clarification = (
+            "请明确要分组的维度，例如渠道、类目或地区。"
+            if detect_response_language(question) == "zh"
+            else "Please choose a supported breakdown, such as channel, category, or region."
+        )
     elif ambiguous_filters:
         labels = "、".join(DIMENSION_FILTER_LABELS[field] for field in ambiguous_filters)
         clarification = f"请为每个筛选维度提供一个值：{labels}。"
@@ -353,10 +386,10 @@ def compile_query_spec(spec: QuerySpec, question: str) -> CompiledQuery:
     if spec.analysis_type == "contribution" and spec.comparison and "gmv" in spec.metrics and spec.dimensions:
         return _compile_gmv_contribution_query(spec, question)
     if USER_METRICS.intersection(spec.metrics):
-        return _compile_user_query(spec, question)
+        return _compile_user_query(spec)
     if "repurchase_rate" in spec.metrics:
-        return _compile_repurchase_query(spec, question)
-    return _compile_additive_query(spec, question)
+        return _compile_repurchase_query(spec)
+    return _compile_additive_query(spec)
 
 
 def validate_sql_semantics(spec: QuerySpec, sql: str) -> SemanticValidation:
@@ -573,7 +606,7 @@ def _forecast_horizon_label(horizon: str | None) -> str:
     return f"未来 {matched.group(1)} 天" if matched else "未来 30 天"
 
 
-def _compile_user_query(spec: QuerySpec, question: str) -> CompiledQuery:
+def _compile_user_query(spec: QuerySpec) -> CompiledQuery:
     columns = {
         "vip_level": "u.vip_level",
         "area": "r.area",
@@ -583,7 +616,7 @@ def _compile_user_query(spec: QuerySpec, question: str) -> CompiledQuery:
     groups = [columns[dimension] for dimension in spec.dimensions]
     selects = [f"{columns[dimension]} AS {DIMENSION_RESULT_COLUMNS[dimension]}" for dimension in spec.dimensions]
     selects.extend(f"COUNT(DISTINCT u.user_id) AS {metric}" for metric in spec.metrics)
-    bounds, time_filters = _time_fragments(question, spec.time_range, date_column="u.register_date")
+    bounds, time_filters = _time_fragments(spec.time_range, date_column="u.register_date")
     joins = _merge_joins(
         "CROSS JOIN bounds" if bounds else "",
         "JOIN dim_region r ON r.region_id = u.region_id"
@@ -594,7 +627,7 @@ def _compile_user_query(spec: QuerySpec, question: str) -> CompiledQuery:
     group_by = f"\nGROUP BY {', '.join(groups)}" if groups else ""
     order_by = _order_by_fragment(spec)
     limit = f"\nLIMIT {spec.limit}" if spec.limit and groups else ""
-    coverage = _campaign_coverage_clause(spec.time_range)
+    coverage = _period_coverage_clause(spec.time_range, users=True)
     sql = f"{bounds}SELECT {', '.join(selects)}\nFROM dim_user u\n{joins}{where}{group_by}{coverage}{order_by}{limit}".strip()
     chart_type = "table"
     if spec.dimensions:
@@ -608,16 +641,16 @@ def _compile_user_query(spec: QuerySpec, question: str) -> CompiledQuery:
     )
 
 
-def _compile_additive_query(spec: QuerySpec, question: str) -> CompiledQuery:
+def _compile_additive_query(spec: QuerySpec) -> CompiledQuery:
     dimensions = _dimension_fragments(spec.dimensions)
     metrics = [_metric_expression(metric) for metric in spec.metrics]
     select_parts = [*dimensions.selects, *metrics]
-    bounds, time_filter = _time_fragments(question, spec.time_range)
+    bounds, time_filter = _time_fragments(spec.time_range)
     joins = _merge_joins("CROSS JOIN bounds" if bounds else "", dimensions.joins, _filter_joins(spec.filters))
     status = "refunded" if "refunded_orders" in spec.metrics else "paid"
     where_parts = [f"o.status = '{status}'", *time_filter, *_filter_fragments(spec.filters)]
     group_by = f"\nGROUP BY {', '.join(dimensions.groups)}" if dimensions.groups else ""
-    coverage = _campaign_coverage_clause(spec.time_range)
+    coverage = _period_coverage_clause(spec.time_range)
     order_by = _order_by_fragment(spec)
     limit = f"\nLIMIT {spec.limit}" if spec.limit and dimensions.groups else ""
     sql = f"""
@@ -685,9 +718,9 @@ ORDER BY gmv_change {spec.sort_direction.upper()}{limit}
     )
 
 
-def _compile_repurchase_query(spec: QuerySpec, question: str) -> CompiledQuery:
+def _compile_repurchase_query(spec: QuerySpec) -> CompiledQuery:
     dimensions = _dimension_fragments(spec.dimensions)
-    bounds, time_filter = _time_fragments(question, spec.time_range)
+    bounds, time_filter = _time_fragments(spec.time_range)
     joins = _merge_joins("CROSS JOIN bounds" if bounds else "", dimensions.joins, _filter_joins(spec.filters))
     where_parts = ["o.status = 'paid'", *time_filter, *_filter_fragments(spec.filters)]
     inner_dimensions = f"{', '.join(dimensions.selects)}, " if dimensions.selects else ""
@@ -699,6 +732,8 @@ def _compile_repurchase_query(spec: QuerySpec, question: str) -> CompiledQuery:
     having = ""
     if outer_groups and spec.minimum_sample_size:
         having = f"\nHAVING COUNT(*) >= {spec.minimum_sample_size}"
+    if not outer_groups:
+        having = _period_coverage_clause(spec.time_range)
     order_by = _order_by_fragment(spec)
     limit = f"\nLIMIT {spec.limit}" if spec.limit and outer_groups else ""
     cte_prefix = f"{bounds.rstrip()},\n" if bounds else "WITH "
@@ -798,21 +833,22 @@ def _repurchase_extra_metrics(metrics: Iterable[str]) -> str:
 
 
 def _time_fragments(
-    question: str, time_range: str | None, *, date_column: str = "o.order_date"
+    time_range: str | None, *, date_column: str = "o.order_date"
 ) -> tuple[str, list[str]]:
     if not time_range:
         return "", []
-    intent = parse_time_intent(question if _has_explicit_time(question) else time_range)
+    intent = parse_time_intent(time_range)
     predicate, _ = build_period_predicates(intent, date_column)
     return "WITH bounds AS (SELECT max(order_date) AS end_date FROM fact_orders)\n", [predicate]
 
 
-def _campaign_coverage_clause(time_range: str | None) -> str:
+def _period_coverage_clause(time_range: str | None, *, users: bool = False) -> str:
     intent = parse_time_intent(time_range or "")
-    if not intent.campaign_day:
+    if not (intent.campaign_day or intent.calendar_year):
         return ""
-    predicate, _ = build_period_predicates(intent, "observed.order_date")
-    return f"\nHAVING EXISTS (SELECT 1 FROM fact_orders observed CROSS JOIN bounds WHERE {predicate})"
+    table, column = ("dim_user", "register_date") if users else ("fact_orders", "order_date")
+    predicate, _ = build_period_predicates(intent, f"observed.{column}")
+    return f"\nHAVING EXISTS (SELECT 1 FROM {table} observed CROSS JOIN bounds WHERE {predicate})"
 
 
 def _filter_fragments(filters: Iterable[QueryFilter]) -> list[str]:
@@ -865,6 +901,8 @@ def _detect_metrics(question: str) -> tuple[tuple[str, ...], str | None]:
         ("gmv", ("销售额", "gmv", "成交额", "金额")),
     )
     metrics = tuple(metric for metric, aliases in ordered if any(alias in text for alias in aliases))
+    if re.search(r"\b(?:revenue|gross merchandise value)\b", question, re.IGNORECASE) and "gmv" not in metrics:
+        metrics = (*metrics, "gmv")
     if refund_count:
         metrics = ("refunded_orders", *(metric for metric in metrics if metric != "orders"))
     if registrations:
@@ -893,7 +931,18 @@ def _detect_dimensions(question: str) -> tuple[str, ...]:
         dimensions.append("order_month")
     elif any(token in text for token in ("趋势", "每日", "每天", "按天")):
         dimensions.append("order_date")
+    dimensions.extend(
+        _ENGLISH_GROUPS[group] for group in _english_group_labels(question) if group in _ENGLISH_GROUPS
+    )
     return _unique(dimensions)
+
+
+def _english_group_labels(question: str) -> tuple[str, ...]:
+    return tuple(
+        " ".join(group.split())
+        for groups in _ENGLISH_GROUP.findall(question.lower())
+        for group in re.split(r"\s*,\s*(?:and\s+)?|\s+and\s+", groups)
+    )
 
 
 def _payload_filters(value: Any) -> tuple[QueryFilter, ...]:
@@ -972,17 +1021,6 @@ def _can_default_to_gmv(question: str, dimensions: tuple[str, ...]) -> bool:
         token in text for token in ("销售", "成交", "流水", "趋势")
     )
     return ranking_default or trend_default
-
-
-def _explicit_time_range(question: str) -> str | None:
-    if not _has_explicit_time(question):
-        return None
-    return parse_time_intent(question).label
-
-
-def _has_explicit_time(question: str) -> bool:
-    text = question.lower().replace(" ", "")
-    return bool(campaign_match(text) or re.search(r"(?:近|最近)\d+(?:天|日)", text)) or any(marker in text for marker in _TIME_MARKERS[2:])
 
 
 def _is_ranking_question(question: str) -> bool:

@@ -1,6 +1,31 @@
-import type { AgentStreamEvent } from "./types";
+import type { AgentHealth, AgentStreamEvent } from "./types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+const HEALTH_TIMEOUT_MS = 4000;
+
+export async function fetchAgentHealth(signal: AbortSignal): Promise<AgentHealth | null> {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  if (signal.aborted) return null;
+  signal.addEventListener("abort", abort);
+  const timeout = setTimeout(abort, HEALTH_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/health`, {
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    if (!response.ok) return null;
+    const health = (await response.json()) as AgentHealth | null;
+    if (health?.status !== "ok" || typeof health.llm_configured !== "boolean") return null;
+    return health;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+    signal.removeEventListener("abort", abort);
+  }
+}
 
 export async function streamAgentQuery(
   question: string,
