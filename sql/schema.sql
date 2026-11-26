@@ -1,5 +1,3 @@
-CREATE EXTENSION IF NOT EXISTS vector;
-
 CREATE TABLE IF NOT EXISTS dim_date (
   date_key DATE PRIMARY KEY,
   year INT NOT NULL,
@@ -71,8 +69,7 @@ CREATE TABLE IF NOT EXISTS data_dictionary (
   table_name VARCHAR(80) NOT NULL,
   column_name VARCHAR(80),
   description TEXT NOT NULL,
-  synonyms TEXT[] NOT NULL DEFAULT '{}',
-  embedding vector(1536)
+  synonyms TEXT[] NOT NULL DEFAULT '{}'
 );
 
 CREATE TABLE IF NOT EXISTS metric_dictionary (
@@ -81,13 +78,5 @@ CREATE TABLE IF NOT EXISTS metric_dictionary (
   description TEXT NOT NULL,
   expression_sql TEXT NOT NULL,
   filter_sql TEXT,
-  synonyms TEXT[] NOT NULL DEFAULT '{}',
-  embedding vector(1536)
+  synonyms TEXT[] NOT NULL DEFAULT '{}'
 );
-
--- Optional approximate-nearest-neighbor indexes.  Rows without embeddings are
--- still usable by the deterministic lexical retriever during local bootstrap.
-CREATE INDEX IF NOT EXISTS idx_data_dictionary_embedding
-  ON data_dictionary USING ivfflat (embedding vector_cosine_ops) WITH (lists = 10);
-CREATE INDEX IF NOT EXISTS idx_metric_dictionary_embedding
-  ON metric_dictionary USING ivfflat (embedding vector_cosine_ops) WITH (lists = 10);

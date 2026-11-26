@@ -67,7 +67,7 @@ def create_app() -> FastAPI:
             status="ok",
             app_name=settings.app_name,
             environment=settings.environment,
-            llm_configured=bool(settings.deepseek_api_key),
+            llm_configured=settings.llm_provider.strip().lower() == "deepseek" and bool(settings.deepseek_api_key),
         )
 
     @app.post("/api/agent/query", response_model=AgentResponse)

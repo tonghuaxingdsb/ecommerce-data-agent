@@ -2,10 +2,9 @@ from __future__ import annotations
 
 """Small, dependency-light retrieval layer for the data and metric dictionaries.
 
-The production database has pgvector columns, but local development and tests do
-not need an embedding service.  We therefore keep a deterministic lexical
-retriever as the fallback and expose a pgvector search helper for callers that
-already have an embedding from their model provider.
+The application uses deterministic lexical retrieval. The pgvector search
+helper is available to callers that have installed the optional vector schema
+and already have an embedding from their model provider.
 """
 
 import re
@@ -105,9 +104,9 @@ class DictionaryRetriever:
     ) -> list[dict[str, Any]]:
         """Search persisted dictionary embeddings using pgvector cosine distance.
 
-        Embedding generation is intentionally left to the configured model
-        provider.  A null embedding is ignored, so seeded lexical records remain
-        usable while a project is bootstrapped.
+        Apply sql/schema-vector.sql before calling this helper. Embedding
+        generation is left to the model provider. The helper skips records with
+        null embeddings.
         """
         runtime_settings = settings or get_settings()
         table = "metric_dictionary" if kind == "metric" else "data_dictionary"

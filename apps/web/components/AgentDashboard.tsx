@@ -1,8 +1,8 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { streamAgentQuery } from "@/lib/api";
-import type { AgentResult, AgentStreamEvent, Scalar } from "@/lib/types";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { fetchAgentHealth, streamAgentQuery } from "@/lib/api";
+import type { AgentHealth, AgentResult, AgentStreamEvent, Scalar } from "@/lib/types";
 import { ResultChart } from "./ResultChart";
 
 const EXAMPLES = ["近 30 天销售额多少？环比上个月呢？", "Top10 商品是哪些？", "华东区老客复购率怎么样？", "近 30 天每日销售趋势", "下季度各商品应该准备多少库存"];
@@ -11,6 +11,7 @@ const ACTIVE_CONVERSATION_KEY = "commerce-lens-active-conversation-v1";
 const MAX_CONVERSATIONS = 20;
 const MAX_TURNS = 50;
 const REQUEST_TIMEOUT_MS = 120_000;
+const HEALTH_POLL_INTERVAL_MS = 10_000;
 const NODE_LABELS: Record<string, string> = {
   classify_intent: "识别意图",
   prepare_context: "检索口径",
@@ -51,10 +52,30 @@ export function AgentDashboard() {
   const [activeConversationId, setActiveConversationId] = useState("");
   const [hydrated, setHydrated] = useState(false);
   const [activeRequest, setActiveRequest] = useState<ActiveRequest | null>(null);
+  const [health, setHealth] = useState<AgentHealth | null>();
+  const healthCheckId = useRef(0);
   const abortController = useRef<AbortController | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const stickToLatest = useRef(true);
   const pendingTurnFocus = useRef<string | null>(null);
+
+  const checkHealth = useCallback(async (signal: AbortSignal) => {
+    const checkId = ++healthCheckId.current;
+    const result = await fetchAgentHealth(signal);
+    if (!signal.aborted && checkId === healthCheckId.current) setHealth(result);
+    return result;
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const refresh = () => { void checkHealth(controller.signal); };
+    refresh();
+    const interval = window.setInterval(refresh, HEALTH_POLL_INTERVAL_MS);
+    return () => {
+      window.clearInterval(interval);
+      controller.abort();
+    };
+  }, [checkHealth]);
 
   useEffect(() => {
     const restored = restoreConversations();
@@ -119,24 +140,12 @@ export function AgentDashboard() {
   async function submit(event?: FormEvent) {
     event?.preventDefault();
     const normalized = question.trim();
-    if (!normalized || running || abortController.current || !activeConversation) return;
+    if (!normalized || running || abortController.current || !activeConversation || !health) return;
 
     const conversationId = activeConversation.id;
     const turnId = crypto.randomUUID();
-    const turn: ChatTurn = {
-      id: turnId,
-      question: normalized,
-      progress: [],
-      running: true,
-      error: "",
-      result: null,
-      createdAt: Date.now(),
-    };
-    pendingTurnFocus.current = turnId;
-    stickToLatest.current = false;
-    appendTurn(conversationId, turn);
-    setQuestion("");
     const controller = new AbortController();
+    let started = false;
     let timedOut = false;
     abortController.current = controller;
     setActiveRequest({ conversationId, turnId });
@@ -146,6 +155,22 @@ export function AgentDashboard() {
     }, REQUEST_TIMEOUT_MS);
 
     try {
+      const currentHealth = await checkHealth(controller.signal);
+      if (!currentHealth || controller.signal.aborted) return;
+
+      pendingTurnFocus.current = turnId;
+      stickToLatest.current = false;
+      appendTurn(conversationId, {
+        id: turnId,
+        question: normalized,
+        progress: [],
+        running: true,
+        error: "",
+        result: null,
+        createdAt: Date.now(),
+      });
+      setQuestion((current) => current === question ? "" : current);
+      started = true;
       await streamAgentQuery(
         normalized,
         conversationId,
@@ -162,7 +187,7 @@ export function AgentDashboard() {
       updateTurn(conversationId, turnId, (current) => ({ ...current, error: message }));
     } finally {
       window.clearTimeout(timeoutId);
-      updateTurn(conversationId, turnId, (current) => ({ ...current, running: false }));
+      if (started) updateTurn(conversationId, turnId, (current) => ({ ...current, running: false }));
       if (abortController.current === controller) abortController.current = null;
       setActiveRequest((current) => current?.turnId === turnId ? null : current);
     }
@@ -252,7 +277,13 @@ export function AgentDashboard() {
           <span className="brand-mark">C</span>
           <div><strong>Commerce Lens</strong><span>电商数据分析 Agent</span></div>
         </div>
-        <div className="system-status"><span className="status-dot" />Agent online</div>
+        <div className="system-status" role="status" data-state={health === undefined ? "checking" : health ? "online" : "offline"}>
+          <span className="status-dot" aria-hidden="true" />
+          <div>
+            <span>{health === undefined ? "正在连接 Agent" : health ? "Agent 已连接" : "Agent 离线"}</span>
+            {health && <small>{health.llm_configured ? "模型已配置" : "离线规则模式"}</small>}
+          </div>
+        </div>
       </header>
 
       <div className="dashboard-grid">
@@ -328,8 +359,9 @@ export function AgentDashboard() {
               <span>↵ Enter 提交 · 支持多轮追问</span>
               {running
                 ? <button type="button" className="stop-button" onClick={() => abortController.current?.abort()}>停止</button>
-                : <button type="submit" className="run-button" disabled={!hydrated || !activeConversation || !question.trim()}>开始分析 <i>→</i></button>}
+                : <button type="submit" className="run-button" disabled={!hydrated || !activeConversation || !question.trim() || !health}>开始分析 <i>→</i></button>}
             </div>
+            {health === null && <p className="query-connection-message">Agent API 未连接，连接恢复后即可提交。</p>}
           </form>
 
           <div className="conversation-scroll" ref={transcriptRef} onScroll={handleTranscriptScroll}>

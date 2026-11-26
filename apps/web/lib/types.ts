@@ -1,5 +1,10 @@
 export type Scalar = string | number | boolean | null;
 
+export interface AgentHealth {
+  status: "ok";
+  llm_configured: boolean;
+}
+
 export interface ChartSpec {
   type?: "bar" | "line" | "pie" | "table" | string;
   x?: string | null;

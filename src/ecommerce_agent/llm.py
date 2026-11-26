@@ -126,7 +126,13 @@ class DeepSeekGateway:
     ) -> LLMResult:
         if not self._client:
             return LLMResult(
-                text=build_fallback_analysis(question=question, intent=intent, rows=rows, language=language),
+                text=build_fallback_analysis(
+                    question=question,
+                    intent=intent,
+                    rows=rows,
+                    language=language,
+                    query_spec=plan.get("query_spec"),
+                ),
                 configured=False,
             )
 
@@ -198,9 +204,7 @@ few-shot 示例：
 
     def _mock_response(self, question: str, intent: str) -> str:
         plan = fallback_sql_plan(question, intent)
-        payload = plan.to_dict()
-        payload["summary"] = f"当前使用离线规则 provider 生成可验证 SQL。{payload['summary']}"
-        return json.dumps(payload, ensure_ascii=False, indent=2)
+        return json.dumps(plan.to_dict(), ensure_ascii=False, indent=2)
 
     def _build_summary_prompt(
         self,

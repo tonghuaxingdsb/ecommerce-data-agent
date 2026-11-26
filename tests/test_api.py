@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import ecommerce_agent.main as main_module
+import pytest
 from fastapi.testclient import TestClient
+from ecommerce_agent.config import Settings
 
 
 def test_sse_endpoint_streams_trace_and_result(monkeypatch):
@@ -38,3 +40,23 @@ def test_api_allows_nextjs_development_origin():
     )
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
+
+
+@pytest.mark.parametrize(
+    ("provider", "api_key", "configured"),
+    [("mock", "unused-key", False), ("deepseek", None, False), (" DEEPSEEK ", "configured-key", True)],
+)
+def test_health_reports_the_selected_provider_mode(monkeypatch, provider, api_key, configured):
+    monkeypatch.setattr(
+        main_module,
+        "get_settings",
+        lambda: Settings(llm_provider=provider, deepseek_api_key=api_key),
+    )
+    client = TestClient(main_module.create_app())
+
+    response = client.get("/health", headers={"Origin": "http://localhost:3000"})
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
+    assert response.json()["status"] == "ok"
+    assert response.json()["llm_configured"] is configured

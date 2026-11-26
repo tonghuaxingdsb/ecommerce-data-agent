@@ -7,8 +7,9 @@ from typing import Any
 
 from ecommerce_agent.conversation import is_ambiguous_metric_question
 from ecommerce_agent.dimension_filters import DIMENSION_FILTER_COLUMNS
+from ecommerce_agent.language import detect_response_language
 from ecommerce_agent.semantic import USER_METRICS, QuerySpec, build_query_spec, compile_query_spec
-from ecommerce_agent.time_intelligence import build_sales_overview_sql, campaign_match, parse_time_intent
+from ecommerce_agent.time_intelligence import build_sales_overview_sql, campaign_match, explicit_calendar_year, parse_time_intent
 
 
 FEW_SHOTS = """
@@ -94,7 +95,10 @@ def parse_sql_plan(
         or spec.dimensions == ("order_date",)
         or "order_month" in spec.dimensions
         or any(item.field in DIMENSION_FILTER_COLUMNS for item in spec.filters)
+        or spec.needs_clarification
         or campaign_match(spec.time_range or "")
+        or explicit_calendar_year(spec.time_range or "")
+        or ((spec.dimensions or spec.time_range) and detect_response_language(question) == "en")
         or USER_METRICS.intersection(spec.metrics)
         or "refunded_orders" in spec.metrics
         or ("units" in spec.metrics and "product" in spec.dimensions and spec.sort_by == "units")

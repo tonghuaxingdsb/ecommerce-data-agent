@@ -57,3 +57,27 @@ def test_execute_sql_reads_postgres_when_available():
     assert result.row_count == 2
     assert result.columns == ["product_name", "category"]
     assert result.rows[0]["product_name"]
+
+
+@pytest.mark.parametrize("sql", ["SELECT (1", "SELECT 'unterminated"])
+def test_parse_failures_are_safety_errors_without_escape_sequences(sql):
+    with pytest.raises(SQLSafetyError, match="SQL 无法解析") as exc_info:
+        validate_readonly_sql(sql)
+    assert "\x1b" not in str(exc_info.value)
+
+    result = execute_sql(sql)
+    assert result.error == str(exc_info.value)
+
+
+@pytest.mark.parametrize("suffix", [" -- count orders", "; -- count orders", "; /* count orders */"])
+def test_execute_sql_preserves_query_with_trailing_comment(suffix):
+    sql = "SELECT '--;' AS marker" + suffix
+    try:
+        with psycopg.connect(DATABASE_URL, connect_timeout=1):
+            pass
+    except psycopg.OperationalError:
+        pytest.skip("PostgreSQL is not available.")
+
+    result = execute_sql(sql, settings=Settings(database_url=DATABASE_URL))
+    assert result.ok, result.error
+    assert result.rows == [{"marker": "--;"}]

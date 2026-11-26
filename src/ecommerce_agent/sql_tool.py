@@ -8,7 +8,9 @@ from typing import Any
 
 import psycopg
 from psycopg.rows import dict_row
-from sqlglot import exp, parse
+from sqlglot import Dialect, exp, parse
+from sqlglot.errors import ParseError, TokenError
+from sqlglot.tokens import TokenType
 
 from ecommerce_agent.config import Settings, get_settings
 
@@ -80,7 +82,20 @@ def validate_readonly_sql(sql: str, max_rows: int = 200, allowed_tables: set[str
     if len(normalized_sql) > max_length:
         raise SQLSafetyError(f"SQL 超过长度限制（最多 {max_length} 个字符）。")
 
-    expressions = [expression for expression in parse(normalized_sql, read="postgres") if expression is not None]
+    try:
+        parsed = parse(normalized_sql, read="postgres")
+    except ParseError as exc:
+        location = exc.errors[0] if exc.errors else {}
+        line, column = location.get("line"), location.get("col")
+        detail = f"（第 {line} 行，第 {column} 列）" if line and column else ""
+        raise SQLSafetyError(f"SQL 无法解析{detail}。") from exc
+    except TokenError as exc:
+        raise SQLSafetyError("SQL 无法解析，请检查引号和注释是否闭合。") from exc
+
+    expressions = [
+        expression for expression in parsed
+        if expression is not None and not isinstance(expression, exp.Semicolon)
+    ]
     if len(expressions) != 1:
         raise SQLSafetyError("只允许执行单条 SQL。")
 
@@ -110,7 +125,13 @@ def validate_readonly_sql(sql: str, max_rows: int = 200, allowed_tables: set[str
     if unknown_tables:
         raise SQLSafetyError(f"SQL 引用了非白名单表：{', '.join(unknown_tables)}。")
 
-    executable_sql = f"SELECT * FROM ({normalized_sql}) AS agent_limited_result LIMIT {max_rows}"
+    query_sql = normalized_sql
+    if any(isinstance(expression, exp.Semicolon) for expression in parsed):
+        # A comment attached to a trailing terminator can survive text trimming.
+        tokens = Dialect.get_or_raise("postgres").tokenize(normalized_sql)
+        last_query_token = next(token for token in reversed(tokens) if token.token_type != TokenType.SEMICOLON)
+        query_sql = normalized_sql[:last_query_token.end + 1]
+    executable_sql = f"SELECT * FROM (\n{query_sql}\n) AS agent_limited_result LIMIT {max_rows}"
     return SafeSQL(original_sql=normalized_sql, executable_sql=executable_sql, tables=referenced_tables)
 
 

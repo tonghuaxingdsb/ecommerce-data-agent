@@ -2,7 +2,7 @@
 
 Phase 0 delivers the project skeleton for an ecommerce natural-language data analysis agent:
 
-- PostgreSQL + pgvector schema for ecommerce orders, users, products, regions, dates and future RAG dictionaries.
+- PostgreSQL schema for ecommerce orders, users, products, regions, dates and retrieval dictionaries, with optional pgvector support.
 - Synthetic ecommerce dataset generator with 3-6 months of data and 100k+ orders by default. CSV output defaults to `utf-8-sig` so Chinese text opens cleanly in Excel on Windows.
 - FastAPI service skeleton wired to a LangGraph workflow.
 - DeepSeek API gateway through the OpenAI-compatible SDK. It calls DeepSeek when `DEEPSEEK_API_KEY` is configured and returns a local mock response otherwise.
@@ -14,6 +14,12 @@ Phase 0 delivers the project skeleton for an ecommerce natural-language data ana
 
 ## Quick Start
 
+- Python 3.13 and [uv](https://docs.astral.sh/uv/).
+- Docker with Compose for the bundled PostgreSQL 17 service, or an existing PostgreSQL instance.
+- [Node.js 20.9 or newer](https://nextjs.org/docs/app/getting-started/installation) and npm if running the web frontend.
+
+### With Docker
+
 ```powershell
 Copy-Item .env.example .env
 docker compose up -d postgres
@@ -22,6 +28,20 @@ uv run python scripts/load_seed_data.py
 uv run python scripts/seed_dictionaries.py
 uv run ecommerce-agent-api
 ```
+
+### Without Docker
+
+Create an empty demo database on your PostgreSQL server. The database user needs permission to create tables and indexes. Copy `.env.example` to `.env`, set `DATABASE_URL` to your connection string, then run the same commands starting with `uv run python scripts/generate_seed_data.py`. The loader initializes `sql/schema.sql` on standard PostgreSQL.
+
+### Optional vector retrieval
+
+Install pgvector on the database server (the Compose image includes it) and apply [`sql/schema-vector.sql`](sql/schema-vector.sql) after the core schema using a database role that can create the extension and alter the dictionary tables. Export `DATABASE_URL` in your shell for `psql`. The application and seed scripts read it from `.env`.
+
+```powershell
+psql "$env:DATABASE_URL" -v ON_ERROR_STOP=1 -f sql/schema-vector.sql
+```
+
+The vector search helper also requires populated dictionary embeddings.
 
 Set `DEEPSEEK_API_KEY` in `.env` before starting the API if you want live model calls. The default model is `deepseek-v4-pro` and the default base URL is `https://api.deepseek.com`.
 
@@ -70,7 +90,7 @@ The legacy demo calls the same LangGraph chain as the API. It remains available 
 
 ## Phase 2 capabilities
 
-- The data/metric dictionaries are retrieved by business-question keywords before SQL generation. The PostgreSQL schema includes pgvector columns and cosine indexes; local fallback retrieval keeps the demo runnable without an embedding service.
+- The data and metric dictionaries are retrieved by business-question keywords before SQL generation. The optional vector schema adds pgvector columns and cosine indexes for callers of the vector search helper.
 - Time expressions such as `近 7 天`, `上周`, `本月`, `环比` and `同比` are converted into bounded periods anchored to the latest date in `fact_orders`.
 - Send the same `conversation_id` in successive API requests to ask follow-up questions. For example, ask `近 30 天销售额多少？` and then `那环比呢？`.
 - Ambiguous questions such as `上个月卖得怎么样？` produce a clarification instead of guessing a metric.

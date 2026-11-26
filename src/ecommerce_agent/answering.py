@@ -4,7 +4,7 @@ from math import isfinite
 from typing import Any
 
 from ecommerce_agent.semantic import DIMENSION_RESULT_COLUMNS, METRIC_RESULT_COLUMNS, SUPPORTED_DIMENSIONS, SUPPORTED_METRICS, USER_METRICS, QuerySpec, build_query_spec
-from ecommerce_agent.time_intelligence import campaign_match, parse_time_intent
+from ecommerce_agent.time_intelligence import campaign_match, explicit_calendar_year, parse_time_intent
 
 
 def build_fallback_analysis(
@@ -12,7 +12,7 @@ def build_fallback_analysis(
 ) -> str:
     if language == "zh":
         return build_chinese_analysis(question, intent, rows, query_spec)
-    return build_english_analysis(question, intent, rows)
+    return build_english_analysis(question, intent, rows, query_spec)
 
 
 def is_usable_analysis(text: str, language: str) -> bool:
@@ -36,6 +36,9 @@ def build_chinese_analysis(
     if not rows:
         if campaign_match(spec.time_range or ""):
             return f"现有数据在{spec.time_range}当天未返回符合查询条件的记录。"
+        year = explicit_calendar_year(spec.time_range or question)
+        if year is not None:
+            return f"现有数据中没有 {year} 年符合查询条件的记录。"
         if intent == "inventory_planning":
             return "按当前趋势预测和安全库存假设，没有商品需要补货。建议仍结合在途库存、采购提前期和活动计划复核。"
         return "这次查询没有返回数据。建议先放宽时间范围或确认筛选条件是否过窄。"
@@ -121,9 +124,9 @@ def build_chinese_analysis(
     primary_metric = spec.metrics[0] if spec.metrics else None
     primary_dimension = spec.dimensions[0] if spec.dimensions else None
     if primary_metric and primary_dimension:
-        metric_column = METRIC_RESULT_COLUMNS.get(primary_metric)
-        dimension_column = DIMENSION_RESULT_COLUMNS.get(primary_dimension)
-        if metric_column in first and dimension_column in first:
+        metric_column = METRIC_RESULT_COLUMNS[primary_metric]
+        dimension_column = DIMENSION_RESULT_COLUMNS[primary_dimension]
+        if first.get(dimension_column) is not None and _finite_number(first.get(metric_column)) is not None:
             if primary_dimension == "vip_level" and primary_metric in USER_METRICS and "分布" in question:
                 distribution = "、".join(
                     f"{row[dimension_column]} {format_int(row[metric_column])} 人" for row in rows
@@ -136,6 +139,11 @@ def build_chinese_analysis(
                 f"结果已按 {metric_column} {spec.sort_direction.upper()} 排序，可在明细表继续查看其他{SUPPORTED_DIMENSIONS[primary_dimension]}。"
             )
 
+    if intent == "product_analysis":
+        product_summary = _build_chinese_product_summary(first)
+        if product_summary:
+            return product_summary
+
     if primary_metric and not primary_dimension:
         metric_column = METRIC_RESULT_COLUMNS.get(primary_metric)
         if metric_column in first:
@@ -144,25 +152,6 @@ def build_chinese_analysis(
                 f"{format_metric_value(primary_metric, first.get(metric_column))}。"
                 "可以继续按商品、渠道、地区或日期拆分查看贡献。"
             )
-
-    if intent == "product_analysis" and "product_name" in first:
-        top = first
-        total_gmv = sum(number_or_zero(row.get("gmv")) for row in rows)
-        top_share = number_or_zero(top.get("gmv")) / total_gmv * 100 if total_gmv else 0
-        top_names = "、".join(str(row.get("product_name")) for row in rows[:3])
-        return (
-            f"按销售额看，排名第一的是「{top.get('product_name')}」，类目为「{top.get('category')}」，"
-            f"销售额 {format_money(top.get('gmv'))}，销量 {format_int(top.get('units'))} 件，订单量 {format_int(top.get('orders'))} 单。"
-            f"Top3 商品分别是 {top_names}。在当前返回的商品中，第一名贡献约 {top_share:.2f}% 的销售额，"
-            "后续可以进一步看这些商品的渠道来源和库存是否匹配。"
-        )
-
-    if intent == "product_analysis" and "category" in first:
-        return (
-            f"当前销售额最高的类目是「{first.get('category')}」，销售额 {format_money(first.get('gmv'))}，"
-            f"销量 {format_int(first.get('units'))} 件，订单量 {format_int(first.get('orders'))} 单。"
-            "建议继续对头部类目拆商品和渠道，判断增长是由爆品拉动还是类目整体增长。"
-        )
 
     if intent == "channel_analysis":
         top = first
@@ -183,6 +172,24 @@ def build_chinese_analysis(
         )
 
     return f"已根据问题「{question}」完成查询，共返回 {len(rows)} 行结果。建议查看结果表中的头部项，并继续按时间、地区或渠道做拆分。"
+
+
+def _build_chinese_product_summary(row: dict[str, Any]) -> str:
+    product = row.get("product_name")
+    category = row.get("category")
+    if product is not None:
+        description = f"结果中的首个商品为「{product}」"
+        details = [f"类目为「{category}」"] if category is not None else []
+    elif category is not None:
+        description = f"结果中的首个类目为「{category}」"
+        details = []
+    else:
+        return ""
+    for column, label, unit in (("gmv", "销售额", ""), ("units", "销量", " 件"), ("orders", "订单量", " 单")):
+        value = _finite_number(row.get(column))
+        if value is not None:
+            details.append(f"{label} {format_metric_value(column, value)}{unit}")
+    return "，".join([description, *details]) + "。"
 
 
 def _build_chinese_sales_overview(question: str, row: dict[str, Any], spec: QuerySpec) -> str:
@@ -232,8 +239,13 @@ def _finite_number(value: Any) -> float | None:
     return number if isfinite(number) else None
 
 
-def build_english_analysis(question: str, intent: str, rows: list[dict[str, Any]]) -> str:
+def build_english_analysis(
+    question: str, intent: str, rows: list[dict[str, Any]], query_spec: dict[str, Any] | None = None
+) -> str:
     if not rows:
+        year = explicit_calendar_year((query_spec or {}).get("time_range") or question)
+        if year is not None:
+            return f"The available data has no records matching the query for {year}."
         return "The query returned no rows. Try widening the time range or relaxing the filters."
     return f"The query for '{question}' returned {len(rows)} rows. The top result is {rows[0]}."
 

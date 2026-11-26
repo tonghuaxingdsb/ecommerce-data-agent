@@ -82,7 +82,8 @@ def match_capability(question: str) -> CapabilityDecision:
             task_type="unsupported_business", capability="unsupported_business", supported=False, inherit_context=False,
             reason=reason,
         )
-    if not any(token in text for token in (*_BUSINESS_TERMS, *_FOLLOW_UP_TERMS)):
+    english_metric = re.search(r"\b(?:revenue|gross merchandise value)\b", question, re.IGNORECASE)
+    if not english_metric and not any(token in text for token in (*_BUSINESS_TERMS, *_FOLLOW_UP_TERMS)):
         return CapabilityDecision(
             task_type="out_of_scope", capability="out_of_scope", supported=False, inherit_context=False,
             reason="我只处理电商订单、商品、渠道、地区、会员指标分析和商品库存规划；可以改问近 30 天销售额或商品销量。",
